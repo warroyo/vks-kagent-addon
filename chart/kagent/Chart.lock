@@ -1,0 +1,12 @@
+dependencies:
+- name: substrate
+  repository: oci://ghcr.io/kagent-dev/substrate/helm
+  version: 1.0.0
+- name: substrate-podcert
+  repository: oci://ghcr.io/kagent-dev/substrate/helm
+  version: 1.0.0
+- name: kagent
+  repository: oci://ghcr.io/kagent-dev/kagent/helm
+  version: 1.0.1
+digest: sha256:25e440988db98fdf5b5773dd2218fc8d9efafb9c3b38b7cc8fd7a2c0006b6c9b
+generated: "2026-11-12T20:06:39.526429206-07:00"

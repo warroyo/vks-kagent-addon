@@ -1,0 +1,210 @@
+# Values for the kagent umbrella chart.
+#
+# On VKS the AddonConfigDefinition (chart/addon-config-definition.yaml) renders
+# a complete values file per cluster and overrides the derived keys below, so a
+# tenant never sets them. They are repeated here, for the release name `kagent`
+# in the namespace `ate-system`, so that `helm template kagent chart/kagent -n
+# ate-system` and `helm lint` work without the ACD. Keys marked DERIVED must stay
+# in step with the ACD; acd_test.go checks that they do.
+#
+# The release name must be `kagent`: the Substrate subchart prefixes every
+# object with it (Services kagent-api, kagent-idp, kagent-atenet-router;
+# ServiceAccounts kagent-ate-api-server, kagent-atelet, ...), and the values
+# below point at those names.
+
+global:
+  # DERIVED: the cluster's DNS domain, from the Cluster resource. Used in
+  # runtime-facing service URLs that kagent generates.
+  clusterDomain: cluster.local
+  # Mirror registry that replaces the registry host of every image, including
+  # the ones this chart templates itself. Empty pulls from the original hosts.
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# --- This chart's own objects -------------------------------------------------
+
+# The Job that creates the certificate authorities and the RustFS credentials.
+bootstrap:
+  image:
+    registry: ghcr.io
+    repository: warroyo/vks-kagent-addon/bootstrap
+    # Empty means the chart's appVersion.
+    tag: ""
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# The one PostgreSQL both kagent and Substrate use, in the kagent namespace.
+# It authenticates clients with pod certificates, so there are no passwords.
+postgres:
+  # The image and digest kagent's own install uses.
+  image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+  storageSize: 10Gi
+  # Empty uses the cluster's default storage class.
+  storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+# Snapshot storage. The substrate subchart's own RustFS takes its keys as
+# plain values, so it is switched off (substrate.rustfs.enabled=false) and this
+# chart renders an equivalent whose keys come from a Secret that the bootstrap
+# Job generates.
+rustfs:
+  enabled: true
+  image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
+  # Runs `aws s3api create-bucket`.
+  bucketInitImage: amazon/aws-cli:2.38.5@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1
+  # kagent's default Harnesses write to s3://ate-snapshots/kagent/, and the
+  # cluster-wide snapshot location below is gs://ate-snapshots/. Change the
+  # bucket only together with both.
+  bucket: ate-snapshots
+  storageSize: 20Gi
+  storageClass: ""
+  # Created by the bootstrap Job with keys AWS_ACCESS_KEY_ID and
+  # AWS_SECRET_ACCESS_KEY, in the release namespace.
+  credentialsSecret: rustfs-credentials
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  bucketInit:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# Extra WorkerPools, on top of kagent's own `kagent-default`. Each item:
+#   name:      DNS label, also the name of the worker ServiceAccount
+#   namespace: created when it is not the release or kagent namespace
+#   replicas:  number of worker pods
+workerPools: []
+# The worker image, and the sandbox class and SandboxConfig the pools use.
+workerPool:
+  image: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0
+  sandboxClass: gvisor
+  sandboxConfigRef: gvisor-default
+
+# --- Substrate ----------------------------------------------------------------
+
+substrate:
+  preview:
+    - PerTemplateSnapshotLocation
+    - GoldenEgressPolicy
+  postgres:
+    clientCertificates:
+      enabled: true
+    readWriteConnectionStringSecretRef:
+      name: substrate-postgres-readwrite
+      key: readWriteConnectionString
+    ownerConnectionStringSecretRef:
+      name: substrate-postgres-owner
+      key: ownerConnectionString
+  # Replaced by this chart's rustfs, so the chart's plain-text keys are unused.
+  rustfs:
+    enabled: false
+  ateApi:
+    # With rustfs.enabled=false the chart no longer derives the cluster-wide
+    # snapshot location, so it is set here. The S3 backend uses gs:// URIs.
+    snapshotLocation: gs://ate-snapshots/
+    authorization:
+      # DERIVED: kagent's controller (creates atespaces) and the shared
+      # ate-client ServiceAccount (`kubectl ate`).
+      bootstrapOwners:
+        - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+        - system:serviceaccount:ate-system:kagent-ate-client
+  atenetRouter:
+    # DERIVED: only kagent's controller may reach actors.
+    ingressAllowedSPIFFEIDs:
+      - spiffe://cluster.local/ns/kagent/sa/kagent-controller
+  credentialProvider:
+    # DERIVED: atespace kagent may read Secrets in the kagent namespace.
+    namespacePolicies:
+      - atespace: kagent
+        allowedNamespaces: [kagent]
+  atelet:
+    # DERIVED: atelet's --ateapi-address and --ateapi-server-name default to
+    # api.ate-system.svc, which does not exist in a prefixed release.
+    extraArgs:
+      - --ateapi-address=k8s:///kagent-api.ate-system.svc:443
+      - --ateapi-server-name=kagent-api.ate-system.svc
+  objectStorePlugin:
+    # The environment of the object-store plugin in ate-api-server and atelet.
+    # Replaces what the chart sets when rustfs.enabled=true; the keys come from
+    # the Secret instead of values. Keep the endpoint in step with this chart's
+    # rustfs Service (kagent-rustfs) and the release namespace.
+    extraEnv:
+      - name: AWS_REGION
+        value: us-east-1
+      - name: AWS_ENDPOINT_URL
+        value: http://kagent-rustfs.ate-system.svc:9000
+      - name: AWS_S3_USE_PATH_STYLE
+        value: "true"
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: rustfs-credentials
+            key: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: rustfs-credentials
+            key: AWS_SECRET_ACCESS_KEY
+
+# --- Pod certificate controller -----------------------------------------------
+
+substrate-podcert:
+  # The login certificates for Substrate's database users go to this
+  # ServiceAccount (the default client). DERIVED: ate-api-server of release
+  # kagent.
+  postgresClientNamespace: ate-system
+  postgresClientServiceAccount: kagent-ate-api-server
+  # DERIVED: kagent's controller gets the owner and read/write logins.
+  postgresClients:
+    - kagent/kagent-controller=kagent_owner_user
+    - kagent/kagent-controller=kagent_readwrite_user
+
+# --- kagent -------------------------------------------------------------------
+
+kagent:
+  namespaceOverride: kagent
+  kagent-tools:
+    namespaceOverride: kagent
+  database:
+    postgres:
+      clientCertificate:
+        enabled: true
+      ownerConnectionStringSecretRef:
+        name: kagent-postgres-owner
+        key: ownerConnectionString
+      readWriteConnectionStringSecretRef:
+        name: kagent-postgres-readwrite
+        key: readWriteConnectionString
+  config:
+    substrate:
+      # DERIVED
+      apiEndpoint: dns:///kagent-api.ate-system.svc:443
+      routerUrl: https://kagent-atenet-router.ate-system.svc:443
+      actorJwtIssuer: https://kagent-idp.ate-system.svc
+  controller:
+    substrateClientCertificate:
+      enabled: true
+  substrateWorkerPool:
+    create: true
+    workerImage: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0
+  harnesses:
+    enabled: true

@@ -1,0 +1,106 @@
+# The bootstrap Job: creates, only when absent, the certificate authorities,
+# the JWT signing pool and the API authentication config that Substrate and the
+# pod certificate controller read, plus the RustFS credentials. It never
+# rotates anything. It runs before the release's own objects, so the Secrets
+# exist when the first pod starts.
+#
+# It writes only to the release namespace, which the helm-controller creates
+# before any hook, so it needs no ClusterRole and creates no namespace.
+#
+# The ServiceAccount and Role are hooks with a lower weight, so they exist
+# before the Job and go away with it. There is no post-install hook anywhere in
+# this chart: Helm runs those only after every resource is Ready, and
+# helm-controller waits for that.
+{{- $name := printf "%s-bootstrap" .Release.Name }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+# get to find what exists, create for what does not, update to refresh the JWT
+# pool's public keys.
+- apiGroups: [""]
+  resources: [secrets, configmaps]
+  verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-9"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kagent-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $name }}
+      {{- include "kagent-addon.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: bootstrap
+        image: {{ include "kagent-addon.bootstrapImage" . }}
+        imagePullPolicy: IfNotPresent
+        args:
+        - --namespace={{ .Release.Namespace }}
+        {{- if .Values.rustfs.enabled }}
+        - --rustfs-credentials-secret={{ .Values.rustfs.credentialsSecret }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        resources:
+          {{- toYaml .Values.bootstrap.resources | nindent 10 }}

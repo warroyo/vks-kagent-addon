@@ -1,0 +1,23 @@
+# The kagent namespace. The label opts it in to Substrate's API ingress policy,
+# which admits only labelled namespaces; kagent's controller lives here. The
+# release namespace (ate-system) is not rendered: the helm-controller creates
+# it before the first hook runs, and the bootstrap Job only writes there.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "kagent-addon.kagentNamespace" . }}
+  labels:
+    ate.dev/api-access: "true"
+{{- /* Namespaces of the extra WorkerPools, once each. */}}
+{{- $seen := dict .Release.Namespace true (include "kagent-addon.kagentNamespace" .) true }}
+{{- range .Values.workerPools }}
+{{- $namespace := .namespace | default (include "kagent-addon.kagentNamespace" $) }}
+{{- if not (hasKey $seen $namespace) }}
+{{- $_ := set $seen $namespace true }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $namespace }}
+{{- end }}
+{{- end }}

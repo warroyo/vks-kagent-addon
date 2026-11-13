@@ -1,0 +1,205 @@
+# RustFS, the S3-compatible store for actor snapshots, in the release namespace.
+# It replaces the substrate chart's own rustfs.yaml (switched off with
+# substrate.rustfs.enabled=false), which takes the access and secret keys as
+# plain values. Here both come from the Secret in rustfs.credentialsSecret,
+# which the bootstrap Job generates, so the keys are never in an AddonConfig or
+# a Helm release. The objects mirror the substrate chart's, with the same
+# NetworkPolicy: the default-deny policy in the namespace blocks everything
+# else.
+{{- if .Values.rustfs.enabled }}
+{{- $name := include "kagent-addon.rustfsName" . }}
+{{- $secret := .Values.rustfs.credentialsSecret }}
+{{- /* A new Job per set of inputs: a Job's pod template cannot be patched. */}}
+{{- $initName := printf "%s-bucket-init-%s" $name (printf "%s|%s" .Values.rustfs.bucketInitImage .Values.rustfs.bucket | sha256sum | trunc 8) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.rustfs.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.rustfs.storageSize }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: rustfs
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+  - name: console
+    port: 9001
+    targetPort: 9001
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rustfs
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      {{- include "kagent-addon.imagePullSecrets" . | nindent 6 }}
+      containers:
+      - name: rustfs
+        image: {{ include "kagent-addon.image" (list .Values.rustfs.image .) }}
+        imagePullPolicy: IfNotPresent
+        resources:
+          {{- toYaml .Values.rustfs.resources | nindent 10 }}
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        env:
+        - name: RUSTFS_ADDRESS
+          value: ":9000"
+        - name: RUSTFS_CONSOLE_ADDRESS
+          value: ":9001"
+        - name: RUSTFS_CONSOLE_ENABLE
+          value: "true"
+        - name: RUSTFS_VOLUMES
+          value: "/data"
+        - name: RUSTFS_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: AWS_ACCESS_KEY_ID
+        - name: RUSTFS_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: AWS_SECRET_ACCESS_KEY
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ $name }}-data
+---
+# Creates the snapshot bucket, retrying until RustFS answers. Not a hook: a
+# post-install hook would wait for the whole release to be Ready.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $initName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $name }}
+      {{- include "kagent-addon.imagePullSecrets" . | nindent 6 }}
+      containers:
+      - name: create-bucket
+        image: {{ include "kagent-addon.image" (list .Values.rustfs.bucketInitImage .) }}
+        resources:
+          {{- toYaml .Values.rustfs.bucketInit.resources | nindent 10 }}
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $secret }}
+              key: AWS_SECRET_ACCESS_KEY
+        - name: AWS_REGION
+          value: us-east-1
+        - name: AWS_ENDPOINT_URL
+          value: http://{{ $name }}.{{ .Release.Namespace }}.svc:9000
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          for i in $(seq 1 60); do
+            if aws s3api head-bucket --bucket {{ .Values.rustfs.bucket }} 2>/dev/null; then
+              echo "bucket {{ .Values.rustfs.bucket }} already exists"
+              exit 0
+            fi
+            if aws s3api create-bucket --bucket {{ .Values.rustfs.bucket }} 2>/dev/null; then
+              echo "bucket {{ .Values.rustfs.bucket }} created"
+              exit 0
+            fi
+            echo "waiting for rustfs to become available... ($i/60)"
+            sleep 2
+          done
+          echo "timed out waiting for rustfs"
+          exit 1
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: rustfs
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: app
+          operator: In
+          values:
+          - ate-api-server
+          - atelet
+    - podSelector:
+        matchLabels:
+          batch.kubernetes.io/job-name: {{ $initName }}
+    ports:
+    - protocol: TCP
+      port: api
+{{- end }}

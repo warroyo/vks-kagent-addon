@@ -1,0 +1,30 @@
+# Optional per-cluster values. The AddonConfig must be named
+# <cluster>-kagent and live in the cluster's Supervisor namespace. Without one,
+# the ACD's defaults apply: no extra worker pools, 20Gi of snapshot storage,
+# 10Gi of database storage, the cluster's default StorageClass.
+#
+# The endpoints, identities and cluster domain are derived by the ACD; do not
+# set them. The model API key is a Secret you create in the kagent namespace
+# (for example with External Secrets), never a value here.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfig
+metadata:
+  name: my-cluster-kagent
+  namespace: my-namespace
+  annotations:
+    clusteraddon.addons.kubernetes.vmware.com/owned-for-deletion: "true"
+spec:
+  addonConfigDefinitionRef:
+    name: kagent.0.1.0
+  values:
+    workerPools:
+      - name: analysts
+        namespace: analysts
+        replicas: 2
+    snapshotStorageSize: 50Gi
+    postgresStorageSize: 20Gi
+    storageClass: vsan-default-storage-policy
+    modelProvider:
+      baseUrl: https://models.example.com/v1
+      model: my-model
+      apiKeySecretName: model-api-key

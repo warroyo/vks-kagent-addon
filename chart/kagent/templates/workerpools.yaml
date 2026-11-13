@@ -1,0 +1,44 @@
+# The WorkerPools from workerPools[], on top of kagent's own `kagent-default`
+# (substrateWorkerPool.create). Each pool runs its workers as a ServiceAccount
+# of the same name, as kagent's WorkerPool does.
+{{- $kagentNamespace := include "kagent-addon.kagentNamespace" . }}
+{{- $defaultPool := $.Values.kagent.substrateWorkerPool.name | default "kagent-default" }}
+{{- $keys := dict }}
+{{- range .Values.workerPools }}
+{{- $namespace := .namespace | default $kagentNamespace }}
+{{- $key := printf "%s/%s" $namespace .name }}
+{{- if hasKey $keys $key }}
+{{- fail (printf "workerPools has %s twice" $key) }}
+{{- end }}
+{{- if and (eq $namespace $kagentNamespace) (eq .name $defaultPool) }}
+{{- fail (printf "workerPools name %q is taken by kagent's own WorkerPool" .name) }}
+{{- end }}
+{{- $_ := set $keys $key true }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .name | quote }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "kagent-addon.labels" $ | nindent 4 }}
+---
+apiVersion: ate.dev/v1
+kind: WorkerPool
+metadata:
+  name: {{ .name | quote }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "kagent-addon.labels" $ | nindent 4 }}
+    kagent.dev/worker-pool-name: {{ .name | quote }}
+    kagent.dev/worker-pool-namespace: {{ $namespace | quote }}
+spec:
+  replicas: {{ .replicas | default 2 }}
+  workerImage: {{ include "kagent-addon.image" (list $.Values.workerPool.image $) | quote }}
+  sandboxClasses:
+    - name: {{ $.Values.workerPool.sandboxClass | quote }}
+      configRef:
+        name: {{ $.Values.workerPool.sandboxConfigRef | quote }}
+  template:
+    serviceAccountName: {{ .name | quote }}
+{{- end }}

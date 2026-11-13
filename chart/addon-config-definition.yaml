@@ -1,0 +1,363 @@
+# The addon's AddonConfigDefinition. VKS 3.8 and later read it from the
+# addons.kubernetes.vmware.com/addon-config-definition annotation in
+# Chart.yaml (gzip and base64), instead of generating one with only
+# helmValues and helmOptions. scripts/embed-acd.sh writes the annotation and
+# sets metadata.name from the chart version; run it after editing this file
+# or the version.
+#
+# What it adds to the generated one: a small tenant-facing schema (worker
+# pools, storage, registry, model provider), and a template that renders the
+# chart's whole values file per cluster. The template derives everything that
+# has to agree between kagent, Substrate and the pod certificate controller:
+# the Substrate endpoints and issuer that kagent dials, the SPIFFE identities
+# that Substrate admits, the database client list, the credential policy and the
+# cluster DNS domain. A tenant never sets those; anything set under helmValues
+# at those paths is overwritten.
+#
+# The cluster DNS domain comes from the Cluster resource
+# (spec.clusterNetwork.serviceDomain, cluster.local when absent). The SPIFFE
+# trust domain does not follow it: Substrate's charts hardcode
+# spiffe://cluster.local/... in the flags that check identities.
+#
+# The template is Go text/template with sprig, evaluated per cluster by the
+# addon controller. Use only functions shipped ACDs already use (a missing one
+# is a parse error that fails every cluster): dict, set, hasKey, index, default,
+# printf, deepCopy, fromYaml, toYaml, indent. Lists are built with fromYaml
+# because list is not on that proven set. test/acd/acd_test.go renders it.
+#
+# The release is named after the addon (kagent). The Substrate chart prefixes
+# every object with the release name, so the template prefixes the Service and
+# ServiceAccount names the same way, from .Addon.name.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonConfigDefinition
+metadata:
+  name: kagent.VERSION
+  namespace: vmware-system-vks-public
+spec:
+  schema:
+    openAPIV3Schema:
+      type: object
+      properties:
+        helmOptions:
+          description: Configuration for the HelmRelease resource
+          type: object
+          properties:
+            targetNamespace:
+              description: >-
+                The namespace in the guest cluster where the chart is
+                installed. Substrate, the pod certificate controller, RustFS
+                and the bootstrap Job go here; kagent and PostgreSQL go to the
+                kagent namespace.
+              type: string
+              default: ate-system
+              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              maxLength: 63
+        workerPools:
+          description: >-
+            Extra Substrate WorkerPools, besides kagent's own kagent-default.
+            The add-on creates a pool's namespace when it does not exist.
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              name:
+                description: Name of the WorkerPool, and of its worker ServiceAccount.
+                type: string
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                maxLength: 63
+              namespace:
+                description: Namespace of the WorkerPool.
+                type: string
+                default: kagent
+                pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                maxLength: 63
+              replicas:
+                description: Number of worker pods.
+                type: integer
+                default: 2
+                minimum: 1
+                maximum: 100
+        snapshotStorageSize:
+          description: Size of the volume that holds actor snapshots (RustFS).
+          type: string
+          default: 20Gi
+          pattern: '^[0-9]+(Mi|Gi|Ti)$'
+        postgresStorageSize:
+          description: Size of the PostgreSQL volume, shared by kagent and Substrate.
+          type: string
+          default: 10Gi
+          pattern: '^[0-9]+(Mi|Gi|Ti)$'
+        storageClass:
+          description: >-
+            StorageClass for the PostgreSQL and RustFS volumes. Empty uses the
+            cluster's default class.
+          type: string
+          default: ""
+        imageRegistry:
+          description: >-
+            Registry host that replaces the host of every image (a mirror that
+            keeps the repository paths). Empty pulls from the original hosts.
+          type: string
+          default: ""
+        modelProvider:
+          description: >-
+            kagent's default model, through an OpenAI-compatible endpoint. The
+            API key stays in a Secret that you create in the kagent namespace
+            (for example with External Secrets); it is never an AddonConfig
+            value.
+          type: object
+          properties:
+            baseUrl:
+              description: Base URL of the OpenAI-compatible endpoint. Empty uses OpenAI's.
+              type: string
+              default: ""
+            model:
+              description: Model name.
+              type: string
+              default: gpt-4.1-mini
+            apiKeySecretName:
+              description: >-
+                Name of a Secret in the kagent namespace with the key
+                OPENAI_API_KEY. Empty keeps the chart's default name,
+                kagent-openai.
+              type: string
+              default: ""
+        helmValues:
+          description: >-
+            Extra Helm values for the chart, applied before the derived values
+            above. Keys that the add-on derives (endpoints, identities, the
+            cluster domain, preview gates) are overwritten.
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+  templateInputResources:
+    # The cluster, for its DNS domain.
+    - inputName: ClusterCR
+      apiVersion: cluster.x-k8s.io/v1beta2
+      kind: Cluster
+      name: '{{.Cluster.name}}'
+      scope: Namespace
+  templateOutputResources:
+    - targetClusterOutput:
+        apiVersion: v1
+        kind: Secret
+        name: '{{.Cluster.name}}-{{.Addon.name}}-values'
+        namespace: vmware-system-helm
+        referenceType: ValuesRef
+        scope: Namespace
+      template: |-
+        {{- /* Nested ifs, never and: before Go 1.18, and evaluated every
+               argument, so a guard did not stop the index after it. */ -}}
+        {{- $values := dict -}}
+        {{- if .Values -}}
+        {{-   $values = .Values -}}
+        {{- end -}}
+        {{- $helm := dict -}}
+        {{- if hasKey $values "helmValues" -}}
+        {{-   if index $values "helmValues" -}}
+        {{-     $helm = index $values "helmValues" -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- $v := deepCopy $helm -}}
+        {{- /* The release name is the addon name; the namespace is
+               helmOptions.targetNamespace. */ -}}
+        {{- $release := .Addon.name -}}
+        {{- $ns := "ate-system" -}}
+        {{- if hasKey $values "helmOptions" -}}
+        {{-   if index $values "helmOptions" -}}
+        {{-     if hasKey (index $values "helmOptions") "targetNamespace" -}}
+        {{-       if index $values "helmOptions" "targetNamespace" -}}
+        {{-         $ns = index $values "helmOptions" "targetNamespace" -}}
+        {{-       end -}}
+        {{-     end -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- $kagentNs := "kagent" -}}
+        {{- /* The cluster DNS domain, from the Cluster resource. */ -}}
+        {{- $domain := "cluster.local" -}}
+        {{- if .Dependencies -}}
+        {{-   if hasKey .Dependencies "ClusterCR" -}}
+        {{-     $cluster := index .Dependencies "ClusterCR" -}}
+        {{-     if hasKey $cluster "spec" -}}
+        {{-       $spec := index $cluster "spec" -}}
+        {{-       if hasKey $spec "clusterNetwork" -}}
+        {{-         $network := index $spec "clusterNetwork" -}}
+        {{-         if hasKey $network "serviceDomain" -}}
+        {{-           if index $network "serviceDomain" -}}
+        {{-             $domain = index $network "serviceDomain" -}}
+        {{-           end -}}
+        {{-         end -}}
+        {{-       end -}}
+        {{-     end -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- /* Identities. The trust domain is cluster.local whatever the DNS
+               domain, as Substrate's charts hardcode it. */ -}}
+        {{- $controller := printf "spiffe://cluster.local/ns/%s/sa/%s-controller" $kagentNs $release -}}
+        {{- $lists := fromYaml (printf "preview:\n- PerTemplateSnapshotLocation\n- GoldenEgressPolicy\nowners:\n- %q\n- %q\ningress:\n- %q\npolicies:\n- atespace: %q\n  allowedNamespaces:\n  - %q\natelet:\n- %q\n- %q\nclients:\n- %q\n- %q\n" $controller (printf "system:serviceaccount:%s:%s-ate-client" $ns $release) $controller $kagentNs $kagentNs (printf "--ateapi-address=k8s:///%s-api.%s.svc:443" $release $ns) (printf "--ateapi-server-name=%s-api.%s.svc" $release $ns) (printf "%s/%s-controller=kagent_owner_user" $kagentNs $release) (printf "%s/%s-controller=kagent_readwrite_user" $kagentNs $release)) -}}
+        {{- /* global */ -}}
+        {{- $global := dict -}}
+        {{- if hasKey $v "global" -}}
+        {{-   $global = index $v "global" -}}
+        {{- end -}}
+        {{- $_ := set $global "clusterDomain" $domain -}}
+        {{- if hasKey $values "imageRegistry" -}}
+        {{-   if index $values "imageRegistry" -}}
+        {{-     $_ := set $global "imageRegistry" (index $values "imageRegistry") -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- $_ := set $v "global" $global -}}
+        {{- /* substrate */ -}}
+        {{- $substrate := dict -}}
+        {{- if hasKey $v "substrate" -}}
+        {{-   $substrate = index $v "substrate" -}}
+        {{- end -}}
+        {{- $_ := set $substrate "preview" (index $lists "preview") -}}
+        {{- $ateApi := dict -}}
+        {{- if hasKey $substrate "ateApi" -}}
+        {{-   $ateApi = index $substrate "ateApi" -}}
+        {{- end -}}
+        {{- $authorization := dict -}}
+        {{- if hasKey $ateApi "authorization" -}}
+        {{-   $authorization = index $ateApi "authorization" -}}
+        {{- end -}}
+        {{- $_ := set $authorization "bootstrapOwners" (index $lists "owners") -}}
+        {{- $_ := set $ateApi "authorization" $authorization -}}
+        {{- $_ := set $substrate "ateApi" $ateApi -}}
+        {{- $router := dict -}}
+        {{- if hasKey $substrate "atenetRouter" -}}
+        {{-   $router = index $substrate "atenetRouter" -}}
+        {{- end -}}
+        {{- $_ := set $router "ingressAllowedSPIFFEIDs" (index $lists "ingress") -}}
+        {{- $_ := set $substrate "atenetRouter" $router -}}
+        {{- $credentialProvider := dict -}}
+        {{- if hasKey $substrate "credentialProvider" -}}
+        {{-   $credentialProvider = index $substrate "credentialProvider" -}}
+        {{- end -}}
+        {{- $_ := set $credentialProvider "namespacePolicies" (index $lists "policies") -}}
+        {{- $_ := set $substrate "credentialProvider" $credentialProvider -}}
+        {{- $atelet := dict -}}
+        {{- if hasKey $substrate "atelet" -}}
+        {{-   $atelet = index $substrate "atelet" -}}
+        {{- end -}}
+        {{- $_ := set $atelet "extraArgs" (index $lists "atelet") -}}
+        {{- $_ := set $substrate "atelet" $atelet -}}
+        {{- $_ := set $v "substrate" $substrate -}}
+        {{- /* substrate-podcert */ -}}
+        {{- $podcert := dict -}}
+        {{- if hasKey $v "substrate-podcert" -}}
+        {{-   $podcert = index $v "substrate-podcert" -}}
+        {{- end -}}
+        {{- $_ := set $podcert "postgresClientNamespace" $ns -}}
+        {{- $_ := set $podcert "postgresClientServiceAccount" (printf "%s-ate-api-server" $release) -}}
+        {{- $_ := set $podcert "postgresClients" (index $lists "clients") -}}
+        {{- $_ := set $v "substrate-podcert" $podcert -}}
+        {{- /* kagent */ -}}
+        {{- $kagent := dict -}}
+        {{- if hasKey $v "kagent" -}}
+        {{-   $kagent = index $v "kagent" -}}
+        {{- end -}}
+        {{- $config := dict -}}
+        {{- if hasKey $kagent "config" -}}
+        {{-   $config = index $kagent "config" -}}
+        {{- end -}}
+        {{- $substrateConfig := dict -}}
+        {{- if hasKey $config "substrate" -}}
+        {{-   $substrateConfig = index $config "substrate" -}}
+        {{- end -}}
+        {{- $_ := set $substrateConfig "apiEndpoint" (printf "dns:///%s-api.%s.svc:443" $release $ns) -}}
+        {{- $_ := set $substrateConfig "routerUrl" (printf "https://%s-atenet-router.%s.svc:443" $release $ns) -}}
+        {{- $_ := set $substrateConfig "actorJwtIssuer" (printf "https://%s-idp.%s.svc" $release $ns) -}}
+        {{- $_ := set $config "substrate" $substrateConfig -}}
+        {{- $_ := set $kagent "config" $config -}}
+        {{- /* Model provider. Only what the tenant set. */ -}}
+        {{- if hasKey $values "modelProvider" -}}
+        {{-   if index $values "modelProvider" -}}
+        {{-     $provider := index $values "modelProvider" -}}
+        {{-     $providers := dict -}}
+        {{-     if hasKey $kagent "providers" -}}
+        {{-       $providers = index $kagent "providers" -}}
+        {{-     end -}}
+        {{-     $openAI := dict -}}
+        {{-     if hasKey $providers "openAI" -}}
+        {{-       $openAI = index $providers "openAI" -}}
+        {{-     end -}}
+        {{-     if hasKey $provider "model" -}}
+        {{-       if index $provider "model" -}}
+        {{-         $_ := set $openAI "model" (index $provider "model") -}}
+        {{-       end -}}
+        {{-     end -}}
+        {{-     if hasKey $provider "apiKeySecretName" -}}
+        {{-       if index $provider "apiKeySecretName" -}}
+        {{-         $_ := set $openAI "apiKeySecretRef" (index $provider "apiKeySecretName") -}}
+        {{-       end -}}
+        {{-     end -}}
+        {{-     if hasKey $provider "baseUrl" -}}
+        {{-       if index $provider "baseUrl" -}}
+        {{-         $openAIConfig := dict -}}
+        {{-         if hasKey $openAI "config" -}}
+        {{-           $openAIConfig = index $openAI "config" -}}
+        {{-         end -}}
+        {{-         $_ := set $openAIConfig "baseUrl" (index $provider "baseUrl") -}}
+        {{-         $_ := set $openAI "config" $openAIConfig -}}
+        {{-       end -}}
+        {{-     end -}}
+        {{-     $_ := set $providers "default" "openAI" -}}
+        {{-     $_ := set $providers "openAI" $openAI -}}
+        {{-     $_ := set $kagent "providers" $providers -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- $_ := set $v "kagent" $kagent -}}
+        {{- /* Storage. */ -}}
+        {{- $postgres := dict -}}
+        {{- if hasKey $v "postgres" -}}
+        {{-   $postgres = index $v "postgres" -}}
+        {{- end -}}
+        {{- $rustfs := dict -}}
+        {{- if hasKey $v "rustfs" -}}
+        {{-   $rustfs = index $v "rustfs" -}}
+        {{- end -}}
+        {{- if hasKey $values "postgresStorageSize" -}}
+        {{-   $_ := set $postgres "storageSize" (index $values "postgresStorageSize") -}}
+        {{- end -}}
+        {{- if hasKey $values "snapshotStorageSize" -}}
+        {{-   $_ := set $rustfs "storageSize" (index $values "snapshotStorageSize") -}}
+        {{- end -}}
+        {{- if hasKey $values "storageClass" -}}
+        {{-   if index $values "storageClass" -}}
+        {{-     $_ := set $postgres "storageClass" (index $values "storageClass") -}}
+        {{-     $_ := set $rustfs "storageClass" (index $values "storageClass") -}}
+        {{-   end -}}
+        {{- end -}}
+        {{- $_ := set $v "postgres" $postgres -}}
+        {{- $_ := set $v "rustfs" $rustfs -}}
+        {{- /* The worker pools, as the tenant wrote them. */ -}}
+        {{- if hasKey $values "workerPools" -}}
+        {{-   if index $values "workerPools" -}}
+        {{-     $_ := set $v "workerPools" (index $values "workerPools") -}}
+        {{-   end -}}
+        {{- end -}}
+        stringData:
+          values.yaml: |
+        {{ $v | toYaml | indent 4 }}
+    # The same as the generated ACD: helm-controller reads the HelmRelease
+    # options from this ConfigMap.
+    - supervisorNamespaceOutput:
+        apiVersion: v1
+        kind: ConfigMap
+        name: '{{.Cluster.name}}-{{.Addon.name}}-options'
+        referenceType: Direct
+      template: |-
+        data:
+        {{- if .Values }}
+        {{- if index .Values "helmOptions" }}
+        {{ index .Values "helmOptions" | toYaml | indent 2 }}
+        {{- end }}
+        {{- end }}
+  addonInstallPermission:
+    accessPolicies:
+      - rules:
+          # The options ConfigMap, as in the builtin helm addons' ACDs.
+          - apiGroups: [""]
+            resources: ["configmaps"]
+            verbs: ["get", "create", "update", "patch"]

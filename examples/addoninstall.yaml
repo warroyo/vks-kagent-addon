@@ -1,0 +1,26 @@
+# Attach the addon to every cluster in this Supervisor namespace that carries
+# the label addons.kubernetes.vmware.com/kagent=enabled.
+#
+# The cluster needs Kubernetes 1.37 or later: Substrate uses pod certificates
+# and ClusterTrustBundles (certificates.k8s.io/v1beta1), which 1.37 serves.
+#
+# The chart is a helm addon, so the cluster also needs the helm-controller
+# addon: label it addon.addons.kubernetes.vmware.com/helm-controller=managed
+# if it does not have helm-controller already.
+apiVersion: addons.kubernetes.vmware.com/v1alpha1
+kind: AddonInstall
+metadata:
+  name: kagent-addoninstall
+  namespace: my-namespace
+spec:
+  addonRef:
+    name: kagent
+  clusters:
+    - selector:
+        matchLabels:
+          addons.kubernetes.vmware.com/kagent: enabled
+  releaseFilter:
+    ref:
+      name: kagent.0.1.0
+  crossNamespaceSelection: Blocked
+  stopMatchingBehavior: Retain

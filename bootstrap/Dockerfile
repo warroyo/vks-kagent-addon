@@ -1,5 +1,5 @@
 # The bootstrap Job's image. Build from this directory:
-#   docker build -t ghcr.io/warroyo/vks-kagent-addon/bootstrap:0.1.0 .
+#   docker build -t ghcr.io/warroyo/vks-kagent-addon/bootstrap:0.1.1 .
 FROM golang:1.27 AS build
 WORKDIR /src
 COPY go.mod go.sum ./

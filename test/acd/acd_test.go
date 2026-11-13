@@ -359,7 +359,7 @@ func helmTemplate(t *testing.T, values map[string]any) {
 	if err := os.WriteFile(f, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.CommandContext(context.Background(), "helm", "template", "kagent", "../../chart/kagent", "-n", "ate-system", "-f", f).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "helm", "template", "kagent", "../../chart/kagent", "-n", "ate-system", "--kube-version", "v1.37.1", "-f", f).CombinedOutput()
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
 	}

@@ -1,4 +1,5 @@
-# The kagent namespace. The label opts it in to Substrate's API ingress policy,
+# The kagent namespace. The Pod Security labels are needed by the Substrate
+# workers (see podSecurity in values.yaml). The ate.dev label opts it in to Substrate's API ingress policy,
 # which admits only labelled namespaces; kagent's controller lives here. The
 # release namespace (ate-system) is not rendered: the helm-controller creates
 # it before the first hook runs, and the bootstrap Job only writes there.
@@ -8,6 +9,7 @@ metadata:
   name: {{ include "kagent-addon.kagentNamespace" . }}
   labels:
     ate.dev/api-access: "true"
+    {{- include "kagent-addon.podSecurityLabels" . | nindent 4 }}
 {{- /* Namespaces of the extra WorkerPools, once each. */}}
 {{- $seen := dict .Release.Namespace true (include "kagent-addon.kagentNamespace" .) true }}
 {{- range .Values.workerPools }}
@@ -19,5 +21,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ $namespace }}
+  labels:
+    {{- include "kagent-addon.podSecurityLabels" $ | nindent 4 }}
 {{- end }}
 {{- end }}

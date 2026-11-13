@@ -17,8 +17,9 @@
 //   - every object, including the three pod certificate controller CA pools,
 //     goes to one caller-supplied namespace (the Helm release namespace)
 //     instead of the hardcoded ate-system and podcertificate-controller-system;
-//   - it no longer creates or labels namespaces, so no Namespace can end up
-//     owned by the wrong Helm release;
+//   - it no longer creates namespaces, so no Namespace can end up owned by the
+//     wrong Helm release; it only sets Pod Security labels on the release
+//     namespace, when asked to;
 //   - the RustFS credentials are generated randomly when absent, instead of
 //     being copied from chart values;
 //   - it takes a logger and reports what it created and what it kept.
@@ -49,6 +50,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -109,6 +111,49 @@ type bootstrapper struct {
 	client    kubernetes.Interface
 	namespace string
 	logger    *slog.Logger
+}
+
+// podSecurityLevels are the values the Pod Security Admission labels accept.
+var podSecurityLevels = map[string]bool{"privileged": true, "baseline": true, "restricted": true}
+
+// ensurePodSecurityLevel sets the enforce, audit and warn Pod Security labels
+// of the release namespace to level, and touches no other label. The namespace
+// is created by the helm-controller, not by Helm, so a Namespace template would
+// conflict on ownership; this runs as the first hook step instead. A merge
+// patch is idempotent, and is skipped when the labels already match.
+func (b *bootstrapper) ensurePodSecurityLevel(ctx context.Context, level string) error {
+	if !podSecurityLevels[level] {
+		return fmt.Errorf("pod security level %q must be privileged, baseline or restricted", level)
+	}
+	labels := map[string]string{
+		"pod-security.kubernetes.io/enforce": level,
+		"pod-security.kubernetes.io/audit":   level,
+		"pod-security.kubernetes.io/warn":    level,
+	}
+	namespaces := b.client.CoreV1().Namespaces()
+	current, err := namespaces.Get(ctx, b.namespace, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get namespace %s: %w", b.namespace, err)
+	}
+	same := true
+	for key, value := range labels {
+		if current.Labels[key] != value {
+			same = false
+		}
+	}
+	if same {
+		b.logger.Info("namespace already has the Pod Security labels", "namespace", b.namespace, "level", level)
+		return nil
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"labels": labels}})
+	if err != nil {
+		return err
+	}
+	if _, err := namespaces.Patch(ctx, b.namespace, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("patch namespace %s: %w", b.namespace, err)
+	}
+	b.logger.Info("set Pod Security labels", "namespace", b.namespace, "level", level)
+	return nil
 }
 
 // prepareSubstrate creates or preserves the identity pools and authentication

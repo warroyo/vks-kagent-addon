@@ -4,8 +4,13 @@
 # rotates anything. It runs before the release's own objects, so the Secrets
 # exist when the first pod starts.
 #
-# It writes only to the release namespace, which the helm-controller creates
-# before any hook, so it needs no ClusterRole and creates no namespace.
+# It writes Secrets and ConfigMaps only in the release namespace, which the
+# helm-controller creates before any hook, and creates no namespace. It also
+# sets the Pod Security labels on that namespace (atelet needs `privileged`; VKS
+# enforces `restricted` by default). That cannot be a Namespace template, since
+# Helm does not own the namespace, so it is the first thing the Job does, and
+# its ClusterRole is limited by resourceNames to this one namespace. The Job's
+# own pod passes `restricted`, because it runs before the label exists.
 #
 # The ServiceAccount and Role are hooks with a lower weight, so they exist
 # before the Job and go away with it. There is no post-install hook anywhere in
@@ -41,6 +46,42 @@ rules:
 - apiGroups: [""]
   resources: [secrets, configmaps]
   verbs: [get, create, update]
+---
+# get and patch on the release namespace only, to set its Pod Security labels.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+- apiGroups: [""]
+  resources: [namespaces]
+  resourceNames: [{{ .Release.Namespace | quote }}]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-9"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-{{ .Release.Namespace }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -94,6 +135,7 @@ spec:
         imagePullPolicy: IfNotPresent
         args:
         - --namespace={{ .Release.Namespace }}
+        - --pod-security-level={{ .Values.podSecurity.level }}
         {{- if .Values.rustfs.enabled }}
         - --rustfs-credentials-secret={{ .Values.rustfs.credentialsSecret }}
         {{- end }}

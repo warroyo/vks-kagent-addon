@@ -21,6 +21,6 @@ spec:
           addons.kubernetes.vmware.com/kagent: enabled
   releaseFilter:
     ref:
-      name: kagent.0.1.0
+      name: kagent.0.1.1
   crossNamespaceSelection: Blocked
   stopMatchingBehavior: Retain

@@ -21,6 +21,21 @@ global:
   imageRegistry: ""
   imagePullSecrets: []
 
+# Pod Security Admission level for the namespaces this chart manages: kagent
+# and the namespaces of extra WorkerPools. VKS enforces `restricted` cluster-wide
+# by default, and the Substrate workers cannot pass it: the atecontroller builds
+# worker pods that run as root (runAsUser 0), mount a hostPath, add SYS_ADMIN,
+# NET_ADMIN, SETUID, SETGID and DAC_OVERRIDE, and set an Unconfined AppArmor
+# profile (microvm workers also an Unconfined seccomp profile); see
+# kagent-dev/substrate cmd/atecontroller/internal/controllers/workerpool_apply.go.
+# The workers are created by Substrate in the WorkerPool's namespace, so that
+# namespace needs `privileged` (`baseline` forbids hostPath, the extra
+# capabilities and the unconfined profiles). The release namespace gets the same
+# level from the bootstrap Job, for atelet (root, hostPath, extra capabilities).
+# Everything else this chart renders passes `restricted`.
+podSecurity:
+  level: privileged
+
 # --- This chart's own objects -------------------------------------------------
 
 # The Job that creates the certificate authorities and the RustFS credentials.

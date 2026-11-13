@@ -23,6 +23,7 @@ import (
 func main() {
 	var (
 		namespace       = flag.String("namespace", "", "namespace of the Helm release, where every object is written (required)")
+		podSecurity     = flag.String("pod-security-level", "", "Pod Security Admission level (privileged, baseline or restricted) to set as enforce, audit and warn labels on the namespace; empty leaves its labels alone")
 		rustfsSecret    = flag.String("rustfs-credentials-secret", "", "name of the RustFS credentials Secret to create when absent; empty skips it")
 		kubeconfigPath  = flag.String("kubeconfig", "", "path to a kubeconfig; empty uses the in-cluster configuration")
 		overallDeadline = flag.Duration("timeout", 5*time.Minute, "how long the whole run may take")
@@ -30,13 +31,13 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	if err := run(logger, *namespace, *rustfsSecret, *kubeconfigPath, *overallDeadline); err != nil {
+	if err := run(logger, *namespace, *podSecurity, *rustfsSecret, *kubeconfigPath, *overallDeadline); err != nil {
 		logger.Error("bootstrap failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, namespace, rustfsSecret, kubeconfigPath string, deadline time.Duration) error {
+func run(logger *slog.Logger, namespace, podSecurity, rustfsSecret, kubeconfigPath string, deadline time.Duration) error {
 	if namespace == "" {
 		return fmt.Errorf("--namespace is required")
 	}
@@ -55,6 +56,14 @@ func run(logger *slog.Logger, namespace, rustfsSecret, kubeconfigPath string, de
 	defer cancel()
 
 	b := &bootstrapper{client: client, namespace: namespace, logger: logger}
+	// First, before anything else in the release can start a pod: the
+	// namespace is created by the helm-controller without Pod Security labels,
+	// and atelet needs more than `restricted` allows.
+	if podSecurity != "" {
+		if err := b.ensurePodSecurityLevel(ctx, podSecurity); err != nil {
+			return fmt.Errorf("label namespace %s: %w", namespace, err)
+		}
+	}
 	if err := b.prepareSubstrate(ctx); err != nil {
 		return fmt.Errorf("prepare Substrate prerequisites: %w", err)
 	}

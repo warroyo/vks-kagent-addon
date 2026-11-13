@@ -75,14 +75,21 @@ spec:
     spec:
       serviceAccountName: {{ $name }}
       securityContext:
+        runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       {{- include "kagent-addon.imagePullSecrets" . | nindent 6 }}
       containers:
       - name: rustfs
         image: {{ include "kagent-addon.image" (list .Values.rustfs.image .) }}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         resources:
           {{- toYaml .Values.rustfs.resources | nindent 10 }}
         ports:
@@ -133,10 +140,20 @@ spec:
     spec:
       restartPolicy: OnFailure
       serviceAccountName: {{ $name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       {{- include "kagent-addon.imagePullSecrets" . | nindent 6 }}
       containers:
       - name: create-bucket
         image: {{ include "kagent-addon.image" (list .Values.rustfs.bucketInitImage .) }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         resources:
           {{- toYaml .Values.rustfs.bucketInit.resources | nindent 10 }}
         env:
@@ -150,6 +167,9 @@ spec:
             secretKeyRef:
               name: {{ $secret }}
               key: AWS_SECRET_ACCESS_KEY
+        # The image runs as UID 10001 here, which has no home directory.
+        - name: HOME
+          value: /tmp
         - name: AWS_REGION
           value: us-east-1
         - name: AWS_ENDPOINT_URL

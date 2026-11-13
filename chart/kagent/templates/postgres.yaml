@@ -150,8 +150,15 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: database
     spec:
+      # Passes Pod Security `restricted`: UID 70 is the postgres user of the
+      # alpine image, so initdb and the server run as it directly (the image's
+      # entrypoint only switches user when it starts as root), and fsGroup
+      # makes the data volume and the projected certificate writable and
+      # readable by it.
       securityContext:
-        # Group ownership of the projected certificate and the data volume.
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
         fsGroup: 70
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
@@ -163,6 +170,9 @@ spec:
         image: {{ include "kagent-addon.image" (list .Values.postgres.image .) }}
         securityContext:
           runAsUser: 70
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         env:
         - name: POSTGRES_USER
           value: postgres
@@ -187,6 +197,9 @@ spec:
         image: {{ include "kagent-addon.image" (list .Values.postgres.image .) }}
         securityContext:
           runAsUser: 70
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         command: [/bin/sh, /etc/postgresql/db-setup.sh]
         volumeMounts:
         - name: config
@@ -201,6 +214,10 @@ spec:
       - name: postgresql
         image: {{ include "kagent-addon.image" (list .Values.postgres.image .) }}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         env:
         - name: POSTGRES_DB
           value: kagent

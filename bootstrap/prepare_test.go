@@ -266,3 +266,46 @@ func TestIncompleteRustFSSecretIsAnError(t *testing.T) {
 		t.Error("the incomplete Secret was modified")
 	}
 }
+
+func TestPodSecurityLabelsAreSetAndOtherLabelsKept(t *testing.T) {
+	b, client := newTestBootstrapper()
+	ctx := context.Background()
+	_, err := client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name: testNamespace, Labels: map[string]string{"name": testNamespace, "pod-security.kubernetes.io/enforce": "restricted"},
+	}}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.ensurePodSecurityLevel(ctx, "privileged"); err != nil {
+		t.Fatal(err)
+	}
+	ns, _ := client.CoreV1().Namespaces().Get(ctx, testNamespace, metav1.GetOptions{})
+	for _, mode := range []string{"enforce", "audit", "warn"} {
+		if got := ns.Labels["pod-security.kubernetes.io/"+mode]; got != "privileged" {
+			t.Errorf("%s label = %q", mode, got)
+		}
+	}
+	if ns.Labels["name"] != testNamespace {
+		t.Error("an unrelated label was lost")
+	}
+	// Idempotent: the second run does not patch.
+	client.ClearActions()
+	if err := b.ensurePodSecurityLevel(ctx, "privileged"); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range client.Actions() {
+		if a.GetVerb() != "get" {
+			t.Errorf("second run issued %s", a.GetVerb())
+		}
+	}
+	if err := b.ensurePodSecurityLevel(ctx, "root"); err == nil {
+		t.Error("an invalid level was accepted")
+	}
+}
+
+func TestPodSecurityMissingNamespaceIsAnError(t *testing.T) {
+	b, _ := newTestBootstrapper()
+	if err := b.ensurePodSecurityLevel(context.Background(), "privileged"); err == nil {
+		t.Fatal("want an error when the namespace does not exist")
+	}
+}

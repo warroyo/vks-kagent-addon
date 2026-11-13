@@ -60,3 +60,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/part-of: kagent-addon
 {{- end -}}
+
+{{/* Pod Security Admission labels for a namespace that runs Substrate workers. */}}
+{{- define "kagent-addon.podSecurityLabels" -}}
+pod-security.kubernetes.io/enforce: {{ .Values.podSecurity.level | quote }}
+pod-security.kubernetes.io/audit: {{ .Values.podSecurity.level | quote }}
+pod-security.kubernetes.io/warn: {{ .Values.podSecurity.level | quote }}
+{{- end -}}

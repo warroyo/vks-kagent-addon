@@ -40,7 +40,10 @@ decided and where it overrides the plan.
    the gateway trusts the chart's roots instead of its image's. A Job that
    wrote the ConfigMap and deleted pods was imperative, so it was dropped. The
    cost is manual: the pods read the bundle only at start, so after changing the
-   value run `kubectl -n ate-system rollout restart deploy/kagent-atenet-egress`.
+   value run `kubectl -n ate-system delete pod -l app=atenet-egress`. The
+   Deployment recreates the pods and the policy mounts the new bundle.
+   Restarting the Deployment would edit its pod template, which Flux drift
+   detection on the HelmRelease may revert, rolling the pods again.
    The shipped roots also go stale until the chart is released again. All of it
    goes when kagent-dev/substrate#101 ships (tracked in
    agent-substrate/substrate#2684).

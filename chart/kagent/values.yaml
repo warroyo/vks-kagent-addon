@@ -125,7 +125,10 @@ workerPool:
 # (scripts/sync-ca-roots.sh), plus this bundle when set. Without it the gateway
 # trusts those roots instead of its image's. The egress pods read it
 # only at start, so after changing the value run:
-#   kubectl -n ate-system rollout restart deploy/kagent-atenet-egress
+#   kubectl -n ate-system delete pod -l app=atenet-egress
+# The Deployment recreates the pods and the policy mounts the new bundle.
+# Restarting the Deployment would edit its template, which Flux drift detection may
+# revert, rolling the pods again.
 # Temporary. Upstream kagent-dev/substrate#101 adds
 # `atenetEgress.upstreamTrust.caBundle` to the subchart
 # (https://github.com/kagent-dev/substrate/pull/101, tracked in

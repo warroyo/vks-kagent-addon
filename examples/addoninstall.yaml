@@ -5,7 +5,7 @@
 # and ClusterTrustBundles (certificates.k8s.io/v1beta1), which 1.37 serves.
 #
 # The chart is a helm addon, so the cluster also needs the helm-controller
-# addon: label it addon.addons.kubernetes.vmware.com/helm-controller=managed
+# addon: label it addon.addons.kubernetes.vmware.com/helm-controller=automatic
 # if it does not have helm-controller already.
 apiVersion: addons.kubernetes.vmware.com/v1alpha1
 kind: AddonInstall

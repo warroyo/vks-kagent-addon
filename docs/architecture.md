@@ -88,6 +88,10 @@ ACD. `test/acd/acd_test.go` checks the two agree.
 | `substrate.atelet.extraArgs` | `--ateapi-address` and `--ateapi-server-name` for `kagent-api` |
 | `global.clusterDomain` | from the Cluster resource |
 
+The chart passes the other prefixed addresses itself, but not atelet's
+`--ateapi-address` and `--ateapi-server-name`, which default to
+`api.ate-system.svc`. The ACD sets them through `substrate.atelet.extraArgs`.
+
 The SPIFFE trust domain stays `cluster.local` whatever the cluster's DNS
 domain. Substrate's charts hardcode it in the flags that check identities.
 

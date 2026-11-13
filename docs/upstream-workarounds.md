@@ -12,8 +12,7 @@ release must be named `kagent`, and values use the prefixed names, such as
 `kagent-api.ate-system.svc`. The ACD derives the prefixed endpoints and
 identities (`chart/addon-config-definition.yaml`), and `chart/kagent/values.yaml`
 repeats them for `helm template`. See
-[Architecture](architecture.md#names-and-namespaces). This is the cause of the
-atelet workaround below.
+[Architecture](architecture.md#names-and-namespaces).
 
 ## Credential provider NetworkPolicy blocks the egress gateway
 
@@ -59,19 +58,6 @@ Upstream:
 Remove when #101 ships: set `substrate.atenetEgress.upstreamTrust.caBundle`
 instead, and drop the ConfigMap, the ACD's policy outputs and
 `scripts/sync-ca-roots.sh`.
-
-## atelet addresses the unprefixed API
-
-Upstream problem: atelet's `--ateapi-address` and `--ateapi-server-name` default
-to `api.ate-system.svc`. That Service does not exist in a prefixed release, and
-the chart does not pass the flags.
-
-Here: `substrate.atelet.extraArgs` in `chart/kagent/values.yaml`, derived by the
-ACD.
-
-Upstream: no issue filed yet.
-
-Remove when the chart passes the flags from the release name.
 
 ## RustFS keys are plain values
 

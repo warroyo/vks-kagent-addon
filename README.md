@@ -69,7 +69,7 @@ Prerequisites:
    ```sh
    kubectl -n my-namespace label cluster my-cluster \
      addons.kubernetes.vmware.com/kagent=enabled \
-     addon.addons.kubernetes.vmware.com/helm-controller=managed
+     addon.addons.kubernetes.vmware.com/helm-controller=automatic
    ```
 
    The first label turns the addon on. The second installs `helm-controller`,

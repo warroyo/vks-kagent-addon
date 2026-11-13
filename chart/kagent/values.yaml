@@ -26,8 +26,9 @@ global:
 # The Job that creates the certificate authorities and the RustFS credentials.
 bootstrap:
   image:
-    registry: ghcr.io
-    repository: warroyo/vks-kagent-addon/bootstrap
+    # Prototype: the Supervisor's Harbor, under the name VKS trusts.
+    registry: depot.kube-system.svc
+    repository: kagent-addon/bootstrap
     # Empty means the chart's appVersion.
     tag: ""
   resources:

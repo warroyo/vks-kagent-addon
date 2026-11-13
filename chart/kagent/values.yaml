@@ -41,9 +41,8 @@ podSecurity:
 # The Job that creates the certificate authorities and the RustFS credentials.
 bootstrap:
   image:
-    # Prototype: the Supervisor's Harbor, under the name VKS trusts.
-    registry: depot.kube-system.svc
-    repository: kagent-addon/bootstrap
+    registry: ghcr.io
+    repository: warroyo/vks-kagent-addon/bootstrap
     # Empty means the chart's appVersion.
     tag: ""
   resources:

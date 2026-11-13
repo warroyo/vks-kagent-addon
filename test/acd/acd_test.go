@@ -257,7 +257,7 @@ func TestACDTenantFields(t *testing.T) {
 		"storageClass":        "vsan-default",
 		"imageRegistry":       "harbor.example/proxy",
 		"modelProvider": map[string]any{
-			"baseUrl": "https://pais.example/v1", "model": "qwen", "apiKeySecretName": "pais-key",
+			"baseUrl": "https://models.example/v1", "model": "my-model", "apiKeySecretName": "model-api-key",
 		},
 		"helmValues": map[string]any{
 			// The AddonConfig's own values survive...
@@ -288,9 +288,9 @@ func TestACDTenantFields(t *testing.T) {
 		t.Errorf("workerPools %v", pools)
 	}
 	if get(v, "kagent", "providers", "default") != "openAI" ||
-		get(v, "kagent", "providers", "openAI", "model") != "qwen" ||
-		get(v, "kagent", "providers", "openAI", "apiKeySecretRef") != "pais-key" ||
-		get(v, "kagent", "providers", "openAI", "config", "baseUrl") != "https://pais.example/v1" {
+		get(v, "kagent", "providers", "openAI", "model") != "my-model" ||
+		get(v, "kagent", "providers", "openAI", "apiKeySecretRef") != "model-api-key" ||
+		get(v, "kagent", "providers", "openAI", "config", "baseUrl") != "https://models.example/v1" {
 		t.Errorf("providers %v", get(v, "kagent", "providers"))
 	}
 	if get(v, "substrate", "ateApi", "logLevel") != "debug" {

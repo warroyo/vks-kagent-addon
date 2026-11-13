@@ -1,0 +1,34 @@
+{{- /* The substrate subchart has no credentialProvider.enabled today, so this
+       renders unless someone sets it to false. toString, because comparing nil
+       with a bool is a template error. */}}
+{{- if ne (toString .Values.substrate.credentialProvider.enabled) "false" }}
+# Lets the egress gateway reach the credential provider. The substrate
+# subchart's NetworkPolicy kagent-k8s-credential-provider admits ingress only
+# from pods labelled app=kagent-atenet-egress, but the egress gateway pods are
+# labelled app=atenet-egress, so without this policy egress credential
+# injection cannot connect. NetworkPolicies are additive, so this one only adds
+# the missing source.
+# https://github.com/kagent-dev/substrate/issues/179
+# Remove it when that is fixed in the subchart.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-k8s-credential-provider-from-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-k8s-credential-provider
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: atenet-egress
+    ports:
+    - protocol: TCP
+      port: 50051
+{{- end }}

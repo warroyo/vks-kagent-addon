@@ -46,6 +46,13 @@ rules:
 - apiGroups: [""]
   resources: [secrets, configmaps]
   verbs: [get, create, update]
+{{- if .Values.egressUpstreamTrust.caBundle }}
+# list and delete the egress gateway's pods, so that they are recreated with a
+# changed CA bundle.
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [list, delete]
+{{- end }}
 ---
 # get and patch on the release namespace only, to set its Pod Security labels.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -139,6 +146,10 @@ spec:
         {{- if .Values.rustfs.enabled }}
         - --rustfs-credentials-secret={{ .Values.rustfs.credentialsSecret }}
         {{- end }}
+        {{- if .Values.egressUpstreamTrust.caBundle }}
+        - --egress-ca-input=/egress-ca-input/ca.crt
+        - --egress-ca-configmap={{ include "kagent-addon.egressCABundleName" . }}
+        {{- end }}
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -146,3 +157,15 @@ spec:
             drop: [ALL]
         resources:
           {{- toYaml .Values.bootstrap.resources | nindent 10 }}
+        {{- if .Values.egressUpstreamTrust.caBundle }}
+        volumeMounts:
+        - name: egress-ca-input
+          mountPath: /egress-ca-input
+          readOnly: true
+        {{- end }}
+      {{- if .Values.egressUpstreamTrust.caBundle }}
+      volumes:
+      - name: egress-ca-input
+        configMap:
+          name: {{ .Release.Name }}-egress-upstream-trust-input
+      {{- end }}

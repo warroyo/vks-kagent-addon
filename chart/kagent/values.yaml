@@ -115,6 +115,20 @@ workerPool:
   sandboxClass: gvisor
   sandboxConfigRef: gvisor-default
 
+# PEM CA certificates that the Substrate egress gateway trusts for upstream TLS,
+# in addition to the public roots in its image (for example the CA of a private
+# model gateway). Empty changes nothing. The gateway otherwise verifies only
+# against its image's bundle and its config is fixed by the substrate subchart,
+# so this chart builds a bundle (the bootstrap Job), and a MutatingAdmissionPolicy
+# mounts it into the gateway pods.
+# Temporary. Upstream kagent-dev/substrate#101 adds
+# `atenetEgress.upstreamTrust.caBundle` to the subchart
+# (https://github.com/kagent-dev/substrate/pull/101, tracked in
+# https://github.com/agent-substrate/substrate/issues/2684). When it ships, this
+# becomes `substrate.atenetEgress.upstreamTrust.caBundle` and the policy goes.
+egressUpstreamTrust:
+  caBundle: ""
+
 # --- Substrate ----------------------------------------------------------------
 
 substrate:

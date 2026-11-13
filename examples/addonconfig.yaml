@@ -15,7 +15,7 @@ metadata:
     clusteraddon.addons.kubernetes.vmware.com/owned-for-deletion: "true"
 spec:
   addonConfigDefinitionRef:
-    name: kagent.0.1.3
+    name: kagent.0.1.4
   values:
     workerPools:
       - name: analysts
@@ -24,6 +24,12 @@ spec:
     snapshotStorageSize: 50Gi
     postgresStorageSize: 20Gi
     storageClass: vsan-default-storage-policy
+    # PEM CA certificates for the egress gateway's upstream TLS, for endpoints
+    # with a private CA.
+    egressCABundle: |
+      -----BEGIN CERTIFICATE-----
+      ...
+      -----END CERTIFICATE-----
     modelProvider:
       baseUrl: https://models.example.com/v1
       model: my-model

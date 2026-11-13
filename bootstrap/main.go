@@ -2,7 +2,8 @@
 // addon's Substrate install: certificate authorities, the actor JWT signing
 // pool, the API authentication config and the RustFS credentials. It runs as a
 // Helm pre-install and pre-upgrade hook Job, writes only to the release
-// namespace, and creates each object only when it is absent.
+// namespace, and creates each object only when it is absent. The one exception
+// is the optional egress CA bundle, which it keeps in step with its input.
 package main
 
 import (
@@ -25,19 +26,29 @@ func main() {
 		namespace       = flag.String("namespace", "", "namespace of the Helm release, where every object is written (required)")
 		podSecurity     = flag.String("pod-security-level", "", "Pod Security Admission level (privileged, baseline or restricted) to set as enforce, audit and warn labels on the namespace; empty leaves its labels alone")
 		rustfsSecret    = flag.String("rustfs-credentials-secret", "", "name of the RustFS credentials Secret to create when absent; empty skips it")
+		egressCAInput   = flag.String("egress-ca-input", "", "path to a PEM file of extra CA certificates for the egress gateway's upstream TLS; empty skips the egress CA bundle")
+		egressCAConfig  = flag.String("egress-ca-configmap", "", "name of the ConfigMap to write the egress CA bundle (system roots plus --egress-ca-input) to; empty skips it")
+		systemCAFile    = flag.String("system-ca-file", "/etc/ssl/certs/ca-certificates.crt", "the public CA bundle that the egress CA bundle starts from")
 		kubeconfigPath  = flag.String("kubeconfig", "", "path to a kubeconfig; empty uses the in-cluster configuration")
 		overallDeadline = flag.Duration("timeout", 5*time.Minute, "how long the whole run may take")
 	)
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	if err := run(logger, *namespace, *podSecurity, *rustfsSecret, *kubeconfigPath, *overallDeadline); err != nil {
+	if err := run(logger, *namespace, *podSecurity, *rustfsSecret, egressCA{input: *egressCAInput, configMap: *egressCAConfig, systemFile: *systemCAFile}, *kubeconfigPath, *overallDeadline); err != nil {
 		logger.Error("bootstrap failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, namespace, podSecurity, rustfsSecret, kubeconfigPath string, deadline time.Duration) error {
+// egressCA says where the egress gateway's extra CA bundle comes from and goes.
+type egressCA struct {
+	input      string
+	configMap  string
+	systemFile string
+}
+
+func run(logger *slog.Logger, namespace, podSecurity, rustfsSecret string, egress egressCA, kubeconfigPath string, deadline time.Duration) error {
 	if namespace == "" {
 		return fmt.Errorf("--namespace is required")
 	}
@@ -70,6 +81,11 @@ func run(logger *slog.Logger, namespace, podSecurity, rustfsSecret, kubeconfigPa
 	if rustfsSecret != "" {
 		if err := b.ensureRustFSCredentials(ctx, rustfsSecret); err != nil {
 			return fmt.Errorf("prepare RustFS credentials: %w", err)
+		}
+	}
+	if egress.input != "" && egress.configMap != "" {
+		if err := b.ensureEgressCABundle(ctx, egress.configMap, egress.input, egress.systemFile); err != nil {
+			return fmt.Errorf("prepare egress CA bundle: %w", err)
 		}
 	}
 	logger.Info("bootstrap complete", "namespace", namespace)

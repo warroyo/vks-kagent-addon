@@ -6,7 +6,7 @@
 # or the version.
 #
 # What it adds to the generated one: a small tenant-facing schema (worker
-# pools, storage, registry, model provider), and a template that renders the
+# pools, storage, registry, model provider, egress CA), and a template that renders the
 # chart's whole values file per cluster. The template derives everything that
 # has to agree between kagent, Substrate and the pod certificate controller:
 # the Substrate endpoints and issuer that kagent dials, the SPIFFE identities
@@ -98,6 +98,13 @@ spec:
           description: >-
             Registry host that replaces the host of every image (a mirror that
             keeps the repository paths). Empty pulls from the original hosts.
+          type: string
+          default: ""
+        egressCABundle:
+          description: >-
+            PEM CA certificates the egress gateway trusts for upstream TLS, in
+            addition to the public roots. Needed for endpoints with a private
+            CA, such as an internal model gateway. Empty changes nothing.
           type: string
           default: ""
         modelProvider:
@@ -331,6 +338,17 @@ spec:
         {{- end -}}
         {{- $_ := set $v "postgres" $postgres -}}
         {{- $_ := set $v "rustfs" $rustfs -}}
+        {{- /* The egress gateway's extra CA. Only when the tenant set it. */ -}}
+        {{- if hasKey $values "egressCABundle" -}}
+        {{-   if index $values "egressCABundle" -}}
+        {{-     $trust := dict -}}
+        {{-     if hasKey $v "egressUpstreamTrust" -}}
+        {{-       $trust = index $v "egressUpstreamTrust" -}}
+        {{-     end -}}
+        {{-     $_ := set $trust "caBundle" (index $values "egressCABundle") -}}
+        {{-     $_ := set $v "egressUpstreamTrust" $trust -}}
+        {{-   end -}}
+        {{- end -}}
         {{- /* The worker pools, as the tenant wrote them. */ -}}
         {{- if hasKey $values "workerPools" -}}
         {{-   if index $values "workerPools" -}}

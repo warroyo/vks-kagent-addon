@@ -1,0 +1,112 @@
+{{- if .Values.egressUpstreamTrust.caBundle }}
+# Makes the Substrate egress gateway trust an extra CA for upstream TLS (a
+# private model gateway, for example). The gateway verifies only against
+# /etc/ssl/certs/ca-certificates.crt in its image, and the substrate subchart
+# fixes its config, so this chart does it from outside, in three parts:
+#   - the CA you set, as a hook ConfigMap that the bootstrap Job reads;
+#   - the bootstrap Job, which appends it to the image's public roots, writes
+#     the result to the ConfigMap egress-ca-bundle and, when that changed,
+#     deletes the gateway pods (the Deployment is left alone, as Flux watches
+#     it for drift);
+#   - the MutatingAdmissionPolicy below, which mounts egress-ca-bundle over the
+#     gateway's bundle in every pod it creates.
+# Temporary: upstream kagent-dev/substrate#101 adds a chart value for this
+# (https://github.com/kagent-dev/substrate/pull/101, tracked in
+# https://github.com/agent-substrate/substrate/issues/2684). Then set
+# substrate.atenetEgress.upstreamTrust.caBundle instead and drop all of this.
+#
+# The policy and its binding are hooks, so that they exist before the gateway
+# pods are first created. Helm does not delete hooks on uninstall, so they stay
+# behind after the release is removed; they match only the pods of this
+# namespace, and failurePolicy Fail applies only while they exist.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-egress-upstream-trust-input
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  ca.crt: |
+    {{- .Values.egressUpstreamTrust.caBundle | trim | nindent 4 }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: {{ .Release.Name }}-{{ .Release.Namespace }}-egress-upstream-trust
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  failurePolicy: Fail
+  # Nothing else mutates these pods after this, so a second pass is not needed.
+  reinvocationPolicy: Never
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    objectSelector:
+      matchLabels:
+        app: atenet-egress
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["pods"]
+  # Skip a pod without the gateway container instead of failing it. Match
+  # conditions cannot read `variables`, so this repeats the lookup below.
+  matchConditions:
+  - name: has-agentgateway-container
+    expression: object.spec.containers.exists(c, c.name == "agentgateway")
+  variables:
+  - name: gatewayIndex
+    expression: object.spec.containers.map(c, c.name).indexOf("agentgateway")
+  mutations:
+  - patchType: JSONPatch
+    jsonPatch:
+      # The gateway Deployment always sets volumes and volumeMounts, so each
+      # list exists and `/-` appends to it.
+      expression: |
+        [
+          JSONPatch{
+            op: "add",
+            path: "/spec/volumes/-",
+            value: Object.spec.volumes{
+              name: "egress-upstream-trust",
+              configMap: Object.spec.volumes.configMap{
+                name: {{ include "kagent-addon.egressCABundleName" . | quote }}
+              }
+            }
+          },
+          JSONPatch{
+            op: "add",
+            path: "/spec/containers/" + string(variables.gatewayIndex) + "/volumeMounts/-",
+            value: Object.spec.containers.volumeMounts{
+              name: "egress-upstream-trust",
+              mountPath: "/etc/ssl/certs/ca-certificates.crt",
+              subPath: "ca-certificates.crt",
+              readOnly: true
+            }
+          }
+        ]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: {{ .Release.Name }}-{{ .Release.Namespace }}-egress-upstream-trust
+  labels:
+    {{- include "kagent-addon.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-4"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  policyName: {{ .Release.Name }}-{{ .Release.Namespace }}-egress-upstream-trust
+{{- end }}

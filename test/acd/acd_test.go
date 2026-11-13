@@ -296,6 +296,32 @@ func TestACDTenantFields(t *testing.T) {
 	helmTemplate(t, v)
 }
 
+// The extra egress CA reaches the chart's value when the tenant sets it, and
+// the key stays absent otherwise, so that the chart's empty default applies.
+func TestACDEgressCABundle(t *testing.T) {
+	const pem = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+	v := render(t, map[string]any{
+		"helmOptions":    map[string]any{"targetNamespace": "ate-system"},
+		"egressCABundle": pem,
+		"helmValues":     map[string]any{"egressUpstreamTrust": map[string]any{"other": "kept"}},
+	}, nil)
+	if got := get(v, "egressUpstreamTrust", "caBundle"); got != pem {
+		t.Errorf("egressUpstreamTrust.caBundle = %q, want the tenant's PEM", got)
+	}
+	if get(v, "egressUpstreamTrust", "other") != "kept" {
+		t.Error("other egressUpstreamTrust values from helmValues were lost")
+	}
+
+	for name, values := range map[string]map[string]any{
+		"not set": {"helmOptions": map[string]any{"targetNamespace": "ate-system"}},
+		"empty":   {"egressCABundle": ""},
+	} {
+		if v := render(t, values, nil); get(v, "egressUpstreamTrust") != nil {
+			t.Errorf("%s: egressUpstreamTrust = %v, want it absent", name, get(v, "egressUpstreamTrust"))
+		}
+	}
+}
+
 // Leaving a model field empty must not set the key: the chart's defaults stay.
 func TestACDEmptyModelProviderSetsNothing(t *testing.T) {
 	v := render(t, map[string]any{

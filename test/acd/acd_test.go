@@ -30,17 +30,7 @@ type acdFile struct {
 	} `json:"spec"`
 }
 
-// valuesTemplate returns the template that renders the guest values Secret.
-func valuesTemplate(t *testing.T) *template.Template {
-	t.Helper()
-	raw, err := os.ReadFile("../../chart/addon-config-definition.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var acd acdFile
-	if err := yaml.Unmarshal(raw, &acd); err != nil {
-		t.Fatal(err)
-	}
+func acdFuncs() template.FuncMap {
 	funcs := sprig.TxtFuncMap()
 	funcs["toYaml"] = func(v any) string {
 		b, err := yaml.Marshal(v)
@@ -56,9 +46,28 @@ func valuesTemplate(t *testing.T) *template.Template {
 		}
 		return out
 	}
-	for _, o := range acd.Spec.TemplateOutputResources {
+	return funcs
+}
+
+func loadACD(t *testing.T) acdFile {
+	t.Helper()
+	raw, err := os.ReadFile("../../chart/addon-config-definition.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acd acdFile
+	if err := yaml.Unmarshal(raw, &acd); err != nil {
+		t.Fatal(err)
+	}
+	return acd
+}
+
+// valuesTemplate returns the template that renders the guest values Secret.
+func valuesTemplate(t *testing.T) *template.Template {
+	t.Helper()
+	for _, o := range loadACD(t).Spec.TemplateOutputResources {
 		if o.TargetClusterOutput != nil && o.TargetClusterOutput["referenceType"] == "ValuesRef" {
-			tpl, err := template.New("values").Funcs(funcs).Option("missingkey=error").Parse(o.Template)
+			tpl, err := template.New("values").Funcs(acdFuncs()).Option("missingkey=error").Parse(o.Template)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -415,4 +424,87 @@ func helmTemplate(t *testing.T, values map[string]any) {
 
 func TestACDDefaultRenderIsAValidChart(t *testing.T) {
 	helmTemplate(t, render(t, schemaDefaults(), clusterDeps("cluster.local")))
+}
+
+// renderClusterOutput renders the cluster-scoped Direct output of this kind,
+// returning its (rendered) name and its body.
+func renderClusterOutput(t *testing.T, kind string, values map[string]any) (string, map[string]any) {
+	t.Helper()
+	for _, o := range loadACD(t).Spec.TemplateOutputResources {
+		if o.TargetClusterOutput == nil || o.TargetClusterOutput["kind"] != kind {
+			continue
+		}
+		if o.TargetClusterOutput["scope"] != "Cluster" || o.TargetClusterOutput["referenceType"] != "Direct" {
+			t.Fatalf("%s output is not cluster-scoped Direct: %v", kind, o.TargetClusterOutput)
+		}
+		ctx := map[string]any{
+			"Values":       values,
+			"Dependencies": map[string]any{},
+			"Cluster":      map[string]any{"name": "c1", "namespace": "ns1"},
+			"Addon":        map[string]any{"name": "kagent"},
+		}
+		render := func(name, text string) string {
+			tpl, err := template.New(name).Funcs(acdFuncs()).Option("missingkey=error").Parse(text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if err := tpl.Execute(&out, ctx); err != nil {
+				t.Fatalf("render %s: %v", kind, err)
+			}
+			return out.String()
+		}
+		name := render("name", o.TargetClusterOutput["name"].(string))
+		body := map[string]any{}
+		raw := render("body", o.Template)
+		if err := yaml.Unmarshal([]byte(raw), &body); err != nil {
+			t.Fatalf("%s body is not YAML: %v\n%s", kind, err, raw)
+		}
+		return name, body
+	}
+	t.Fatalf("no %s output in the ACD", kind)
+	return "", nil
+}
+
+// The egress CA policy is an ACD output, applied before Helm runs.
+func TestACDEgressPolicyOutputs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		values map[string]any
+		ns     string
+	}{
+		"default namespace":      {schemaDefaults(), "ate-system"},
+		"no values":              {nil, "ate-system"},
+		"empty target":           {map[string]any{"helmOptions": map[string]any{"targetNamespace": ""}}, "ate-system"},
+		"custom targetNamespace": {map[string]any{"helmOptions": map[string]any{"targetNamespace": "agents"}}, "agents"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			policyName, policy := renderClusterOutput(t, "MutatingAdmissionPolicy", tc.values)
+			bindingName, binding := renderClusterOutput(t, "MutatingAdmissionPolicyBinding", tc.values)
+			if policyName != "kagent-egress-upstream-trust" || bindingName != policyName {
+				t.Errorf("names %q, %q", policyName, bindingName)
+			}
+			if got := get(binding, "spec", "policyName"); got != policyName {
+				t.Errorf("binding policyName = %v, want %v", got, policyName)
+			}
+			if got := get(policy, "spec", "matchConstraints", "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name"); got != tc.ns {
+				t.Errorf("namespaceSelector = %v, want %v", got, tc.ns)
+			}
+			if got := get(policy, "spec", "matchConstraints", "objectSelector", "matchLabels", "app"); got != "atenet-egress" {
+				t.Errorf("objectSelector app = %v", got)
+			}
+			if got := get(policy, "spec", "failurePolicy"); got != "Fail" {
+				t.Errorf("failurePolicy = %v", got)
+			}
+			muts, _ := get(policy, "spec", "mutations").([]any)
+			if len(muts) != 1 || get(muts[0].(map[string]any), "patchType") != "JSONPatch" {
+				t.Fatalf("mutations = %v", muts)
+			}
+			expr, _ := get(muts[0].(map[string]any), "jsonPatch", "expression").(string)
+			for _, want := range []string{`"egress-ca-bundle"`, `"ca-certificates.crt"`, "/etc/ssl/certs/ca-certificates.crt"} {
+				if !strings.Contains(expr, want) {
+					t.Errorf("mutation expression lacks %s", want)
+				}
+			}
+		})
+	}
 }

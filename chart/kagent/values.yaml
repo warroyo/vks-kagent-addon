@@ -117,11 +117,13 @@ workerPool:
 
 # PEM CA certificates that the Substrate egress gateway trusts for upstream TLS,
 # in addition to the public roots (for example the CA of a private model
-# gateway). Empty changes nothing. The gateway otherwise verifies only against
+# gateway). The gateway otherwise verifies only against
 # its image's bundle and its config is fixed by the substrate subchart, so this
-# chart renders the ConfigMap egress-ca-bundle and a MutatingAdmissionPolicy
-# mounts it into the gateway pods. The ConfigMap is the public roots shipped in
-# the chart (scripts/sync-ca-roots.sh) plus this bundle. The egress pods read it
+# chart renders the ConfigMap egress-ca-bundle, and a MutatingAdmissionPolicy
+# that the addon's ACD emits mounts it into the gateway pods. The ConfigMap is
+# always rendered: the public roots shipped in the chart
+# (scripts/sync-ca-roots.sh), plus this bundle when set. Without it the gateway
+# trusts those roots instead of its image's. The egress pods read it
 # only at start, so after changing the value run:
 #   kubectl -n ate-system rollout restart deploy/kagent-atenet-egress
 # Temporary. Upstream kagent-dev/substrate#101 adds

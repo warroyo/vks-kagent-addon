@@ -358,6 +358,89 @@ spec:
         stringData:
           values.yaml: |
         {{ $v | toYaml | indent 4 }}
+    # The egress gateway's CA policy: a MutatingAdmissionPolicy and its binding
+    # that mount the chart's ConfigMap egress-ca-bundle over the gateway's
+    # ca-certificates.crt. They are ACD outputs, not chart templates, because the
+    # addon manager applies them before the HelmRelease runs, so no Helm hook is
+    # needed and they are tracked and removed with the addon. The chart always
+    # renders the ConfigMap, because these always exist.
+    # Temporary: kagent-dev/substrate#101 (chart value for the egress upstream
+    # trust, tracked in agent-substrate/substrate#2684). Both outputs go when it
+    # ships.
+    # The name is the same simple template as the other outputs' names, which
+    # is not known to see .Values, so it cannot hold the namespace; the policy
+    # is per guest cluster, so the addon name is unique enough.
+    - targetClusterOutput:
+        apiVersion: admissionregistration.k8s.io/v1
+        kind: MutatingAdmissionPolicy
+        name: '{{.Addon.name}}-egress-upstream-trust'
+        referenceType: Direct
+        scope: Cluster
+      template: |-
+        {{- /* The release namespace, derived the same way as in the values
+               template above (each output renders on its own). */ -}}
+        {{- $ns := "ate-system" -}}
+        {{- if .Values -}}
+        {{-   if hasKey .Values "helmOptions" -}}
+        {{-     if index .Values "helmOptions" -}}
+        {{-       if hasKey (index .Values "helmOptions") "targetNamespace" -}}
+        {{-         if index .Values "helmOptions" "targetNamespace" -}}
+        {{-           $ns = index .Values "helmOptions" "targetNamespace" -}}
+        {{-         end -}}
+        {{-       end -}}
+        {{-     end -}}
+        {{-   end -}}
+        {{- end -}}
+        spec:
+          failurePolicy: Fail
+          # Nothing else mutates these pods after this, so a second pass is not
+          # needed.
+          reinvocationPolicy: Never
+          matchConstraints:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: {{ $ns }}
+            objectSelector:
+              matchLabels:
+                app: atenet-egress
+            resourceRules:
+            - apiGroups: [""]
+              apiVersions: ["v1"]
+              operations: ["CREATE"]
+              resources: ["pods"]
+          # Skip a pod without the gateway container instead of failing it.
+          # Match conditions cannot read variables, so this repeats the lookup.
+          matchConditions:
+          - name: has-agentgateway-container
+            expression: object.spec.containers.exists(c, c.name == "agentgateway")
+          variables:
+          - name: gatewayIndex
+            expression: object.spec.containers.map(c, c.name).indexOf("agentgateway")
+          mutations:
+          - patchType: JSONPatch
+            jsonPatch:
+              # The gateway Deployment always sets volumes and volumeMounts, so
+              # each list exists and /- appends to it.
+              expression: |
+                [
+                  JSONPatch{op: "add", path: "/spec/volumes/-",
+                    value: Object.spec.volumes{name: "egress-upstream-trust",
+                      configMap: Object.spec.volumes.configMap{name: "egress-ca-bundle"}}},
+                  JSONPatch{op: "add",
+                    path: "/spec/containers/" + string(variables.gatewayIndex) + "/volumeMounts/-",
+                    value: Object.spec.containers.volumeMounts{name: "egress-upstream-trust",
+                      mountPath: "/etc/ssl/certs/ca-certificates.crt",
+                      subPath: "ca-certificates.crt", readOnly: true}}
+                ]
+    - targetClusterOutput:
+        apiVersion: admissionregistration.k8s.io/v1
+        kind: MutatingAdmissionPolicyBinding
+        name: '{{.Addon.name}}-egress-upstream-trust'
+        referenceType: Direct
+        scope: Cluster
+      template: |-
+        spec:
+          policyName: '{{.Addon.name}}-egress-upstream-trust'
     # The same as the generated ACD: helm-controller reads the HelmRelease
     # options from this ConfigMap.
     - supervisorNamespaceOutput:

@@ -1,32 +1,32 @@
+{{- $bundle := "" -}}
 {{- if .Values.egressUpstreamTrust.caBundle }}
-{{- $bundle := .Values.egressUpstreamTrust.caBundle -}}
+{{- $bundle = .Values.egressUpstreamTrust.caBundle -}}
 {{- if not (contains "-----BEGIN CERTIFICATE-----" $bundle) }}
 {{- fail "egressUpstreamTrust.caBundle must hold PEM CA certificates (no -----BEGIN CERTIFICATE----- found)" }}
 {{- end }}
 {{- if contains "PRIVATE KEY" $bundle }}
 {{- fail "egressUpstreamTrust.caBundle contains a private key; it takes public CA certificates only" }}
 {{- end }}
+{{- end }}
 # Makes the Substrate egress gateway trust an extra CA for upstream TLS (a
 # private model gateway, for example). The gateway verifies only against
 # /etc/ssl/certs/ca-certificates.crt in its image, and the substrate subchart
-# fixes its config, so this chart does it from outside, declaratively, in two
-# parts:
-#   - the ConfigMap egress-ca-bundle: the public roots shipped in the chart
+# fixes its config, so this is done from outside, declaratively, in two parts:
+#   - this ConfigMap, egress-ca-bundle: the public roots shipped in the chart
 #     (files/ca-roots.pem, from scripts/sync-ca-roots.sh) plus the CA you set;
-#   - the MutatingAdmissionPolicy below, which mounts that ConfigMap over the
-#     gateway's bundle in every pod it creates.
+#   - a MutatingAdmissionPolicy and binding that mount it over the gateway's
+#     bundle in every pod it creates. They are not in this chart: the addon's
+#     ACD emits them (chart/addon-config-definition.yaml), so the addon manager
+#     applies them before Helm runs, with no hooks.
 # Temporary: upstream kagent-dev/substrate#101 adds a chart value for this
 # (https://github.com/kagent-dev/substrate/pull/101, tracked in
 # https://github.com/agent-substrate/substrate/issues/2684). Then set
 # substrate.atenetEgress.upstreamTrust.caBundle instead and drop all of this.
 #
-# The ConfigMap is a normal resource. The policy and its binding are hooks, so
-# that they exist before the gateway pods are first created. That means the
-# policy can admit the first gateway pod before the ConfigMap exists: the pod
-# stays in ContainerCreating until it appears, and the kubelet retries, so it
-# heals itself. Helm does not delete hooks on uninstall, so the policy and
-# binding stay behind after the release is removed; they match only the pods of
-# this namespace, and failurePolicy Fail applies only while they exist.
+# The ConfigMap is rendered even when no CA is set. The ACD always emits the
+# policy, and a gateway pod that it mutates would hang in ContainerCreating
+# without the ConfigMap. With no private CA the gateway simply trusts this
+# chart's Mozilla roots instead of the ones in its image.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -36,81 +36,8 @@ metadata:
     {{- include "kagent-addon.labels" . | nindent 4 }}
 data:
   ca-certificates.crt: |
+    {{- if $bundle }}
     {{- (printf "%s\n%s" (.Files.Get "files/ca-roots.pem" | trim) ($bundle | trim)) | nindent 4 }}
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingAdmissionPolicy
-metadata:
-  name: {{ .Release.Name }}-{{ .Release.Namespace }}-egress-upstream-trust
-  labels:
-    {{- include "kagent-addon.labels" . | nindent 4 }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-5"
-    helm.sh/hook-delete-policy: before-hook-creation
-spec:
-  failurePolicy: Fail
-  # Nothing else mutates these pods after this, so a second pass is not needed.
-  reinvocationPolicy: Never
-  matchConstraints:
-    namespaceSelector:
-      matchLabels:
-        kubernetes.io/metadata.name: {{ .Release.Namespace }}
-    objectSelector:
-      matchLabels:
-        app: atenet-egress
-    resourceRules:
-    - apiGroups: [""]
-      apiVersions: ["v1"]
-      operations: ["CREATE"]
-      resources: ["pods"]
-  # Skip a pod without the gateway container instead of failing it. Match
-  # conditions cannot read `variables`, so this repeats the lookup below.
-  matchConditions:
-  - name: has-agentgateway-container
-    expression: object.spec.containers.exists(c, c.name == "agentgateway")
-  variables:
-  - name: gatewayIndex
-    expression: object.spec.containers.map(c, c.name).indexOf("agentgateway")
-  mutations:
-  - patchType: JSONPatch
-    jsonPatch:
-      # The gateway Deployment always sets volumes and volumeMounts, so each
-      # list exists and `/-` appends to it.
-      expression: |
-        [
-          JSONPatch{
-            op: "add",
-            path: "/spec/volumes/-",
-            value: Object.spec.volumes{
-              name: "egress-upstream-trust",
-              configMap: Object.spec.volumes.configMap{
-                name: {{ include "kagent-addon.egressCABundleName" . | quote }}
-              }
-            }
-          },
-          JSONPatch{
-            op: "add",
-            path: "/spec/containers/" + string(variables.gatewayIndex) + "/volumeMounts/-",
-            value: Object.spec.containers.volumeMounts{
-              name: "egress-upstream-trust",
-              mountPath: "/etc/ssl/certs/ca-certificates.crt",
-              subPath: "ca-certificates.crt",
-              readOnly: true
-            }
-          }
-        ]
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingAdmissionPolicyBinding
-metadata:
-  name: {{ .Release.Name }}-{{ .Release.Namespace }}-egress-upstream-trust
-  labels:
-    {{- include "kagent-addon.labels" . | nindent 4 }}
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-4"
-    helm.sh/hook-delete-policy: before-hook-creation
-spec:
-  policyName: {{ .Release.Name }}-{{ .Release.Namespace }}-egress-upstream-trust
-{{- end }}
+    {{- else }}
+    {{- .Files.Get "files/ca-roots.pem" | trim | nindent 4 }}
+    {{- end }}

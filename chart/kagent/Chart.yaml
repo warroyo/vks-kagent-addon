@@ -4,7 +4,7 @@ description: >-
   kagent and its Agent Substrate runtime (gVisor sandboxes, egress gateway,
   pod-certificate identity) as one VKS addon release.
 type: application
-# The blog's constraint; Substrate needs pod certificates, served from 1.37. The
+# Substrate needs pod certificates, served from 1.37. The
 # -0 lets VKS builds such as v1.37.1+vmware.4-vkr.1 match.
 kubeVersion: ">=1.37.0-0 <1.38.0-0"
 home: https://github.com/warroyo/vks-kagent-addon

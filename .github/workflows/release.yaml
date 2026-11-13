@@ -1,0 +1,80 @@
+# Publishes the addon to GitHub Packages:
+#   - the bootstrap Job image, ghcr.io/warroyo/vks-kagent-addon/bootstrap, tagged
+#     with the chart's appVersion
+#   - the chart, as an OCI artifact:
+#     oci://ghcr.io/warroyo/vks-kagent-addon/charts/kagent
+# which is what the AddonRepository fetches. A push to main that bumps the
+# version in chart/kagent/Chart.yaml releases that version. The image goes first,
+# because the chart pulls it. A version or tag that is already published is
+# skipped, never overwritten. Each chart version also gets a GitHub release,
+# kagent-<version>, which the README's chart badge reads.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "chart/**"
+      - "bootstrap/**"
+      - "scripts/embed-acd.sh"
+      - ".github/workflows/release.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: oci://ghcr.io/warroyo/vks-kagent-addon/charts
+  IMAGE: ghcr.io/warroyo/vks-kagent-addon/bootstrap
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Check the embedded AddonConfigDefinition is current
+        run: scripts/embed-acd.sh --check
+      - name: Check the CRDs match the pinned charts
+        run: scripts/sync-crds.sh --check
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to the helm registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push the bootstrap image, unless this tag is already published
+        run: |
+          tag=$(yq '.appVersion' chart/kagent/Chart.yaml)
+          if docker manifest inspect "$IMAGE:$tag" >/dev/null 2>&1; then
+            echo "$IMAGE:$tag is already published; skipping"
+            exit 0
+          fi
+          docker buildx build bootstrap --platform linux/amd64 --push -t "$IMAGE:$tag"
+          echo "Published $IMAGE:$tag" >> "$GITHUB_STEP_SUMMARY"
+      - name: Package and push the chart, unless this version is already published
+        working-directory: chart/kagent
+        run: |
+          version=$(yq '.version' Chart.yaml)
+          if helm show chart "$REGISTRY/kagent" --version "$version" >/dev/null 2>&1; then
+            echo "kagent $version is already published; skipping"
+            exit 0
+          fi
+          helm dependency build
+          helm package . -d "$RUNNER_TEMP"
+          helm push "$RUNNER_TEMP/kagent-$version.tgz" "$REGISTRY"
+          echo "Published $REGISTRY/kagent:$version" >> "$GITHUB_STEP_SUMMARY"
+      - name: GitHub release for this version, if there is none
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(yq '.version' chart/kagent/Chart.yaml)
+          app=$(yq '.appVersion' chart/kagent/Chart.yaml)
+          tag="kagent-$version"
+          gh release view "$tag" >/dev/null 2>&1 && exit 0
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" \
+            --notes "Chart \`oci://ghcr.io/warroyo/vks-kagent-addon/charts/kagent\` version $version. Bootstrap image \`ghcr.io/warroyo/vks-kagent-addon/bootstrap:$app\`."

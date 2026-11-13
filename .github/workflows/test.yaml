@@ -1,0 +1,65 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "chart/**"
+      - "bootstrap/**"
+      - "test/**"
+      - "scripts/**"
+      - ".github/workflows/test.yaml"
+  pull_request:
+    paths:
+      - "chart/**"
+      - "bootstrap/**"
+      - "test/**"
+      - "scripts/**"
+      - ".github/workflows/test.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bootstrap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: bootstrap/go.mod
+          cache-dependency-path: bootstrap/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+
+  acd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: test/acd/go.mod
+          cache-dependency-path: test/acd/go.sum
+      - uses: azure/setup-helm@v4
+      - name: Fetch the chart dependencies
+        run: helm dependency build chart/kagent
+      - name: Render the AddonConfigDefinition and the chart
+        working-directory: test/acd
+        run: go test ./...
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Check the embedded AddonConfigDefinition is current
+        run: scripts/embed-acd.sh --check
+      - name: Check the CRDs match the pinned charts
+        run: scripts/sync-crds.sh --check
+      - name: Lint the chart
+        run: |
+          helm dependency build chart/kagent
+          helm lint chart/kagent

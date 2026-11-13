@@ -87,7 +87,9 @@ data:
 {{ .Files.Get "files/substrate-postgres-setup.sql" | indent 4 }}
     COMMIT;
   db-setup.sh: |
-    # Creates the kagent and Substrate roles and schemas, once the server
+    # Creates the kagent database when it is missing, then the kagent and
+    # Substrate roles and schemas in it (Substrate uses the same database, with
+    # its own schema), once the server
     # accepts TCP connections. Only the real server listens on TCP; the image's
     # temporary initialization server is socket-only. Logins have empty
     # passwords: they authenticate with certificates. The script is
@@ -95,9 +97,16 @@ data:
     set -eu
     trap 'exit 0' TERM INT
 
-    until nc -z 127.0.0.1 5432 && psql -U postgres -d kagent -Atc 'SELECT 1' >/dev/null 2>&1; do
+    until nc -z 127.0.0.1 5432 && psql -U postgres -d postgres -Atc 'SELECT 1' >/dev/null 2>&1; do
       sleep 1
     done
+    # The image creates POSTGRES_DB only on the first start of an empty data
+    # directory. If that start was interrupted after initdb, later starts skip
+    # initialization and the database never appears, so create it here.
+    if ! psql -U postgres -d postgres -Atc "SELECT 1 FROM pg_database WHERE datname = 'kagent'" | grep -qx 1; then
+      createdb -U postgres kagent
+      echo "created database kagent"
+    fi
     until psql --no-psqlrc --set=ON_ERROR_STOP=1 -U postgres -d kagent \
       --set=kagent_schema=kagent \
       --set=kagent_owner_role=kagent_owner \

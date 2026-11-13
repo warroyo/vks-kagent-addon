@@ -4,6 +4,17 @@ What this repo carries for problems in kagent's Substrate fork chart v1.0.0
 (`kagent-dev/substrate`), kagent v1.0.1 and `agent-substrate/substrate`. Issue
 and PR states are as of 2026-11-13. Each section says when the workaround can go.
 
+## Constraint: the release is named `kagent`
+
+The Substrate subchart prefixes every object with the release name and puts
+objects in the release namespace. It has no name or namespace overrides. So the
+release must be named `kagent`, and values use the prefixed names, such as
+`kagent-api.ate-system.svc`. The ACD derives the prefixed endpoints and
+identities (`chart/addon-config-definition.yaml`), and `chart/kagent/values.yaml`
+repeats them for `helm template`. See
+[Architecture](architecture.md#names-and-namespaces). This is the cause of the
+atelet workaround below.
+
 ## Credential provider NetworkPolicy blocks the egress gateway
 
 Upstream problem: the subchart's NetworkPolicy `kagent-k8s-credential-provider`
@@ -49,25 +60,6 @@ Remove when #101 ships: set `substrate.atenetEgress.upstreamTrust.caBundle`
 instead, and drop the ConfigMap, the ACD's policy outputs and
 `scripts/sync-ca-roots.sh`.
 
-## No name or namespace overrides in the Substrate chart
-
-Upstream problem: the chart prefixes every object with the release name and puts
-objects in the release namespace. There are no overrides. A release not named
-`substrate` gets prefixed names.
-
-Here: the release must be `kagent`, and values use the prefixed names, such as
-`kagent-api.ate-system.svc`. The ACD derives them
-(`chart/addon-config-definition.yaml`), and `chart/kagent/values.yaml` repeats
-them for `helm template`. See [Architecture](architecture.md#names-and-namespaces).
-
-Upstream:
-
-- kagent-dev/substrate#53: open, install into the release namespace
-- kagent-dev/substrate#64: open, Helm values for settings that need post-renderers
-
-Helm post-renderers are not available to VKS addons, so they cannot replace this.
-Remove when the chart offers overrides or the settings as values.
-
 ## atelet addresses the unprefixed API
 
 Upstream problem: atelet's `--ateapi-address` and `--ateapi-server-name` default
@@ -94,8 +86,6 @@ chart no longer derives it without its RustFS.
 Upstream:
 
 - kagent-dev/substrate#169: open PR, `rustfs.existingSecret`
-- kagent-dev/substrate#158: closed. The upstream bucket-init Job was immutable on
-  upgrade. Ours hashes the pod template into the Job name.
 
 Remove when #169 ships: use the chart's RustFS with the existing Secret.
 
@@ -106,34 +96,8 @@ certificate pools, `actor-id`, the egress MITM CA). Upstream creates them in
 `kagent install` and `ate-setup`, not in the chart.
 
 Here: the bootstrap Job in `bootstrap/` and `chart/kagent/templates/bootstrap.yaml`,
-adapted from kagent's `go/core/pkg/install/substrate_init.go`. The CAs expire
-after one year and nothing renews them.
+adapted from kagent's `go/core/pkg/install/substrate_init.go`.
 
-Upstream:
-
-- agent-substrate/substrate#3175: open, install bootstrap
-- agent-substrate/substrate#3445: open, reload on rotation
+Upstream: agent-substrate/substrate#3175, open, install bootstrap.
 
 Remove when the chart creates these Secrets itself.
-
-## OTLP metrics noise
-
-Upstream problem: components push OTLP metrics to `localhost:4317` when no
-endpoint is set. The logs show errors. Nothing breaks.
-
-Here: no workaround.
-
-Upstream:
-
-- kagent-dev/substrate#76: open
-- kagent-dev/substrate#166: open, a PR
-
-## Chart docs name the wrong certificates API
-
-Upstream problem: the chart docs still say `certificates.k8s.io/v1beta1` is
-required on Kubernetes 1.37. The v1.0.0 code discovers `v1`, which VKS 1.37
-serves.
-
-Here: no workaround.
-
-Upstream: kagent-dev/substrate#168, open.

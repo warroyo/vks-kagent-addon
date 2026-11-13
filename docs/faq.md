@@ -107,3 +107,16 @@ than the installed one fails release selection (`after-upgrade-version-check=0`)
 Name test builds as pre-releases of the next version, such as `0.1.6-test.1`,
 which sorts below `0.1.6`. Never name them above it. See
 [Development](development.md#test-builds).
+
+## Why do components log `failed to upload metrics ... localhost:4317`?
+
+Substrate components push OTLP metrics to `localhost:4317` when no endpoint is
+set, and nothing listens there. The errors are harmless. Upstream:
+kagent-dev/substrate#76 and PR #166, both open.
+
+## When do the CAs expire?
+
+The bootstrap Job creates the certificate authorities, and they expire one year
+after creation. Nothing renews them, and an expired CA breaks every mTLS
+connection. Upstream tracks reload on rotation in agent-substrate/substrate#3445,
+open.

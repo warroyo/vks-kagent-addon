@@ -56,8 +56,8 @@ imagePullSecrets:
 {{- end -}}
 
 {{/*
-The ConfigMap that holds the egress gateway's CA bundle. The bootstrap Job
-writes it and the MutatingAdmissionPolicy mounts it, so both use this name.
+The ConfigMap that holds the egress gateway's CA bundle. The chart renders it and the MutatingAdmissionPolicy mounts it, so both use
+this name.
 */}}
 {{- define "kagent-addon.egressCABundleName" -}}
 egress-ca-bundle

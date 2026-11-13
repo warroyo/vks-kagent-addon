@@ -3,21 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"io"
 	"log/slog"
-	"math/big"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -315,153 +307,5 @@ func TestPodSecurityMissingNamespaceIsAnError(t *testing.T) {
 	b, _ := newTestBootstrapper()
 	if err := b.ensurePodSecurityLevel(context.Background(), "privileged"); err == nil {
 		t.Fatal("want an error when the namespace does not exist")
-	}
-}
-
-// testCAPEM returns a self-signed CA certificate as PEM.
-func testCAPEM(t *testing.T, name string) []byte {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: name},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-}
-
-func writeTempFile(t *testing.T, content []byte) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "file.pem")
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func egressPod(name, app string) *corev1.Pod {
-	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: name, Labels: map[string]string{"app": app}}}
-}
-
-func podNames(t *testing.T, client *fake.Clientset) []string {
-	t.Helper()
-	list, err := client.CoreV1().Pods(testNamespace).List(context.Background(), metav1.ListOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, p := range list.Items {
-		names = append(names, p.Name)
-	}
-	return names
-}
-
-func egressBundle(t *testing.T, client *fake.Clientset) string {
-	t.Helper()
-	cm, err := client.CoreV1().ConfigMaps(testNamespace).Get(context.Background(), "egress-ca-bundle", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cm.Data["ca-certificates.crt"]
-}
-
-// The bundle is the image's roots followed by the extra CA, under the one key,
-// and a first install has no pods to replace.
-func TestEgressCABundleIsCreatedFromSystemRootsAndExtraCA(t *testing.T) {
-	b, client := newTestBootstrapper()
-	system := testCAPEM(t, "system root")
-	extra := testCAPEM(t, "private ca")
-	ctx := context.Background()
-	if _, err := client.CoreV1().Pods(testNamespace).Create(ctx, egressPod("other", "something-else"), metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := b.ensureEgressCABundle(ctx, "egress-ca-bundle", writeTempFile(t, extra), writeTempFile(t, system)); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := egressBundle(t, client), string(system)+string(extra); got != want {
-		t.Errorf("bundle = %q, want the system roots then the extra CA", got)
-	}
-	if got := podNames(t, client); len(got) != 1 {
-		t.Errorf("pods after create = %v, an unrelated pod must stay", got)
-	}
-}
-
-func TestEgressCABundleUnchangedLeavesThePods(t *testing.T) {
-	b, client := newTestBootstrapper()
-	ctx := context.Background()
-	system := writeTempFile(t, testCAPEM(t, "system root"))
-	extra := writeTempFile(t, testCAPEM(t, "private ca"))
-	if err := b.ensureEgressCABundle(ctx, "egress-ca-bundle", extra, system); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.CoreV1().Pods(testNamespace).Create(ctx, egressPod("egress-1", "atenet-egress"), metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := b.ensureEgressCABundle(ctx, "egress-ca-bundle", extra, system); err != nil {
-		t.Fatal(err)
-	}
-	if got := podNames(t, client); len(got) != 1 {
-		t.Errorf("pods = %v, an unchanged bundle must not restart the gateway", got)
-	}
-}
-
-func TestEgressCABundleChangeDeletesOnlyTheEgressPods(t *testing.T) {
-	b, client := newTestBootstrapper()
-	ctx := context.Background()
-	system := writeTempFile(t, testCAPEM(t, "system root"))
-	if err := b.ensureEgressCABundle(ctx, "egress-ca-bundle", writeTempFile(t, testCAPEM(t, "old ca")), system); err != nil {
-		t.Fatal(err)
-	}
-	for name, app := range map[string]string{"egress-1": "atenet-egress", "egress-2": "atenet-egress", "router": "atenet-router"} {
-		if _, err := client.CoreV1().Pods(testNamespace).Create(ctx, egressPod(name, app), metav1.CreateOptions{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	extra := testCAPEM(t, "new ca")
-
-	if err := b.ensureEgressCABundle(ctx, "egress-ca-bundle", writeTempFile(t, extra), system); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(egressBundle(t, client), string(extra)) {
-		t.Error("the ConfigMap was not updated with the new CA")
-	}
-	if got := podNames(t, client); len(got) != 1 || got[0] != "router" {
-		t.Errorf("pods = %v, want only the router left", got)
-	}
-}
-
-func TestEgressCABundleRejectsBadInput(t *testing.T) {
-	system := writeTempFile(t, testCAPEM(t, "system root"))
-	key := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not a real key")})
-	badCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not DER")})
-	for name, input := range map[string][]byte{
-		"empty":             nil,
-		"no PEM":            []byte("hello"),
-		"a private key":     key,
-		"garbage cert body": badCert,
-		"cert and key":      append(testCAPEM(t, "ca"), key...),
-	} {
-		t.Run(name, func(t *testing.T) {
-			b, client := newTestBootstrapper()
-			if err := b.ensureEgressCABundle(context.Background(), "egress-ca-bundle", writeTempFile(t, input), system); err == nil {
-				t.Fatal("expected an error")
-			}
-			if _, err := client.CoreV1().ConfigMaps(testNamespace).Get(context.Background(), "egress-ca-bundle", metav1.GetOptions{}); err == nil {
-				t.Error("a ConfigMap was written for bad input")
-			}
-		})
 	}
 }

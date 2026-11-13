@@ -32,8 +32,8 @@ data:
   postgresql.conf: |
     listen_addresses = '*'
     ssl = on
-    ssl_cert_file = '/run/servicedns.podcert.ate.dev/credential-bundle.pem'
-    ssl_key_file = '/run/servicedns.podcert.ate.dev/credential-bundle.pem'
+    ssl_cert_file = '/run/postgres-tls/server.pem'
+    ssl_key_file = '/run/postgres-tls/server.pem'
     ssl_ca_file = '/run/postgres.podcert.ate.dev/trust-bundle.pem'
     hba_file = '/etc/postgresql/pg_hba.conf'
   pg_hba.conf: |
@@ -44,10 +44,24 @@ data:
     hostssl all postgres all reject
     # Client certificate CNs must match the requested database username.
     hostssl kagent {{ $users }} all cert
+  copy-tls.sh: |
+    # PostgreSQL refuses a private key that has group or world access unless
+    # it is root-owned, and the kubelet gives a projected pod certificate the
+    # pod's fsGroup and the owner it chooses, so the projected file cannot be
+    # relied on to pass. This copies the bundle (certificate chain and key) to
+    # an emptyDir as a 0600 file owned by the database user, and PostgreSQL
+    # reads that copy. mv makes the replacement atomic.
+    set -eu
+    SRC=/run/servicedns.podcert.ate.dev/credential-bundle.pem
+    DST=/run/postgres-tls/server.pem
+    cp "$SRC" "$DST.new"
+    chmod 600 "$DST.new"
+    mv "$DST.new" "$DST"
   reload-tls.sh: |
     # PostgreSQL reads its TLS files only at startup and on SIGHUP. The kubelet
     # replaces the projected pod certificate in place before it expires, so
-    # this loop reloads the server whenever a file changes.
+    # this loop copies the new bundle (copy-tls.sh) and reloads the server
+    # whenever a source file changes.
     set -eu
     trap 'exit 0' TERM INT
 
@@ -56,9 +70,11 @@ data:
     reloaded=""
     while true; do
       current="$(sha256sum "$CERT" "$CA" /etc/postgresql/pg_hba.conf)"
-      if [ "$current" != "$reloaded" ] \
-        && psql -U "$POSTGRES_USER" -d postgres -Atc 'SELECT pg_reload_conf()' >/dev/null 2>&1; then
-        reloaded="$current"
+      if [ "$current" != "$reloaded" ]; then
+        sh /etc/postgresql/copy-tls.sh
+        if psql -U "$POSTGRES_USER" -d postgres -Atc 'SELECT pg_reload_conf()' >/dev/null 2>&1; then
+          reloaded="$current"
+        fi
       fi
       sleep 60 &
       wait $!
@@ -165,6 +181,27 @@ spec:
           type: RuntimeDefault
       {{- include "kagent-addon.imagePullSecrets" . | nindent 6 }}
       initContainers:
+      # Runs to completion first, so the key copy exists when PostgreSQL starts.
+      - name: tls-init
+        image: {{ include "kagent-addon.image" (list .Values.postgres.image .) }}
+        securityContext:
+          runAsUser: 70
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        command: [/bin/sh, /etc/postgresql/copy-tls.sh]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/postgresql
+        - name: servicedns
+          mountPath: /run/servicedns.podcert.ate.dev
+          readOnly: true
+        - name: tls
+          mountPath: /run/postgres-tls
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
       - name: tls-reloader
         restartPolicy: Always
         image: {{ include "kagent-addon.image" (list .Values.postgres.image .) }}
@@ -186,6 +223,8 @@ spec:
         - name: postgres-ca
           mountPath: /run/postgres.podcert.ate.dev
           readOnly: true
+        - name: tls
+          mountPath: /run/postgres-tls
         - name: socket
           mountPath: /var/run/postgresql
         resources:
@@ -257,8 +296,8 @@ spec:
           mountPath: /var/lib/postgresql/data
         - name: config
           mountPath: /etc/postgresql
-        - name: servicedns
-          mountPath: /run/servicedns.podcert.ate.dev
+        - name: tls
+          mountPath: /run/postgres-tls
           readOnly: true
         - name: postgres-ca
           mountPath: /run/postgres.podcert.ate.dev
@@ -272,9 +311,12 @@ spec:
       - name: config
         configMap:
           name: {{ $name }}
+      - name: tls
+        emptyDir: {}
       - name: servicedns
         projected:
-          defaultMode: 0600
+          # Group-readable, so the fsGroup can read it whoever owns the file.
+          defaultMode: 0640
           sources:
           - podCertificate:
               signerName: servicedns.podcert.ate.dev/identity

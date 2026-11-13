@@ -24,7 +24,7 @@ spec:
       url: oci://ghcr.io/warroyo/vks-kagent-addon/charts
   addonFilters:
     - name: kagent
-      versions: ["0.1.0", "0.1.1"]
+      versions: ["0.1.0", "0.1.1", "0.1.2"]
   targetRepositoryName: kagent-oci-repo
   version: "1.0.0"
 ---

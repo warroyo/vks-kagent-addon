@@ -15,7 +15,7 @@ metadata:
     clusteraddon.addons.kubernetes.vmware.com/owned-for-deletion: "true"
 spec:
   addonConfigDefinitionRef:
-    name: kagent.0.1.1
+    name: kagent.0.1.2
   values:
     workerPools:
       - name: analysts

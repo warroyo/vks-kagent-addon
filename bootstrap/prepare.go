@@ -21,6 +21,8 @@
 //     by the wrong Helm release;
 //   - the RustFS credentials are generated randomly when absent, instead of
 //     being copied from chart values;
+//   - actor-id-ca-pool is ECDSA P-256, as in Substrate's own ate-setup,
+//     instead of Ed25519;
 //   - it takes a logger and reports what it created and what it kept.
 // Existing objects are never replaced, except that the JWT pool's derived
 // public keys are refreshed, as in the original.
@@ -118,7 +120,9 @@ func (b *bootstrapper) prepareSubstrate(ctx context.Context) error {
 	if err := b.ensureJWTPool(ctx, actorIDJWTPool); err != nil {
 		return err
 	}
-	if err := b.ensureCAPool(ctx, actorIDCAPool, caKeyED25519); err != nil {
+	// ECDSA P-256, as Substrate's own ate-setup makes it: relying parties
+	// outside the cluster accept it more widely than Ed25519.
+	if err := b.ensureCAPool(ctx, actorIDCAPool, caKeyECDSAP256); err != nil {
 		return err
 	}
 	if err := b.ensureActorIDCACerts(ctx); err != nil {

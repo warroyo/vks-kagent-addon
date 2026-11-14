@@ -100,6 +100,13 @@ func TestCAPoolsHoldAUsablePool(t *testing.T) {
 	// actor-id-ca-certs is the actor identity pool's root certificate.
 	var pool serializedCAPool
 	_ = json.Unmarshal(secretData(t, client, testNamespace, actorIDCAPool)["pool"], &pool)
+	root, err := x509.ParseCertificate(pool.CAs[0].RootCertificateDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.PublicKeyAlgorithm != x509.ECDSA {
+		t.Errorf("actor identity CA key = %v, want ECDSA", root.PublicKeyAlgorithm)
+	}
 	want := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pool.CAs[0].RootCertificateDER})
 	if got := secretData(t, client, testNamespace, actorIDCACerts)["ca.crt"]; !bytes.Equal(got, want) {
 		t.Error("actor-id-ca-certs does not hold the actor identity pool's root certificate")

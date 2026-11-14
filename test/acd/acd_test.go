@@ -26,6 +26,10 @@ type acdFile struct {
 		TemplateOutputResources []struct {
 			Template            string         `json:"template"`
 			TargetClusterOutput map[string]any `json:"targetClusterOutput"`
+			Labels              []struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			} `json:"labels"`
 		} `json:"templateOutputResources"`
 	} `json:"spec"`
 }
@@ -504,6 +508,41 @@ func TestACDEgressPolicyOutputs(t *testing.T) {
 				if !strings.Contains(expr, want) {
 					t.Errorf("mutation expression lacks %s", want)
 				}
+			}
+		})
+	}
+}
+
+// The release namespace is an ACD output, named from helmOptions.targetNamespace
+// and labelled privileged for atelet.
+func TestACDNamespaceOutput(t *testing.T) {
+	var labels map[string]string
+	for _, o := range loadACD(t).Spec.TemplateOutputResources {
+		if o.TargetClusterOutput != nil && o.TargetClusterOutput["kind"] == "Namespace" {
+			labels = map[string]string{}
+			for _, l := range o.Labels {
+				labels[l.Key] = l.Value
+			}
+		}
+	}
+	for _, mode := range []string{"enforce", "audit", "warn"} {
+		if got := labels["pod-security.kubernetes.io/"+mode]; got != "privileged" {
+			t.Errorf("%s label = %q, want privileged", mode, got)
+		}
+	}
+	for name, tc := range map[string]struct {
+		values map[string]any
+		ns     string
+	}{
+		"default namespace":      {schemaDefaults(), "ate-system"},
+		"no values":              {nil, "ate-system"},
+		"empty target":           {map[string]any{"helmOptions": map[string]any{"targetNamespace": ""}}, "ate-system"},
+		"custom targetNamespace": {map[string]any{"helmOptions": map[string]any{"targetNamespace": "agents"}}, "agents"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, _ := renderClusterOutput(t, "Namespace", tc.values)
+			if got != tc.ns {
+				t.Errorf("namespace name = %q, want %q", got, tc.ns)
 			}
 		})
 	}

@@ -113,14 +113,27 @@ Date: 2026-11-12.
 Context: helm-controller creates the release namespace before the first hook. A
 Job that created namespaces could leave one owned by the wrong Helm release.
 
-Decision: the Job creates no namespace. It writes Secrets only in the release
-namespace, through a Role, and sets the Pod Security labels on that namespace,
-because VKS enforces `restricted` and atelet needs `privileged`. The label
-change uses a ClusterRole limited by `resourceNames` to that one namespace. The
-`kagent` namespace is a plain chart template.
+Decision: the Job creates and changes no namespace. It writes Secrets only in
+the release namespace, through a Role. The `kagent` namespace is a plain chart
+template.
 
 Alternatives rejected: a Namespace template for the release namespace. Helm does
 not own that namespace.
+
+## The ACD labels the release namespace
+
+Date: 2026-11-14.
+
+Context: VKS enforces `restricted`, and atelet needs `privileged`. helm-controller
+creates the release namespace, so Helm cannot template it.
+
+Decision: a `targetClusterOutput` of kind Namespace, named from
+`helmOptions.targetNamespace`, with the three `pod-security.kubernetes.io/*`
+labels fixed at `privileged`. The addon manager merges the labels into the
+namespace, and applies outputs before the HelmRelease runs.
+
+Alternatives rejected: the bootstrap Job patching the namespace, which needed a
+ClusterRole and put a platform setting in an install-time pod.
 
 ## The SPIFFE trust domain stays `cluster.local`
 

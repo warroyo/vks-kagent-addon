@@ -40,8 +40,10 @@ The other files in the repo:
 2. An AddonInstall selects clusters labelled
    `addons.kubernetes.vmware.com/kagent=enabled`. The addon manager creates a
    ClusterAddon and an AddonConfig for each one.
-3. The ACD renders one values Secret per cluster, `<cluster>-kagent-values` in
-   `vmware-system-helm`. The Secret holds the chart's whole values file: the
+3. The ACD outputs the release namespace with `privileged` Pod Security labels.
+   helm-controller creates that namespace too, so Helm cannot template it; the
+   addon manager merges the labels in. The ACD also renders one values Secret
+   per cluster, `<cluster>-kagent-values` in `vmware-system-helm`. The Secret holds the chart's whole values file: the
    tenant's AddonConfig values, plus every derived value.
 4. helm-controller installs the chart in the cluster from that Secret. Order
    inside the release:
@@ -111,10 +113,7 @@ pools. This one writes to the release namespace. It creates, only when absent:
 - the RustFS credentials Secret, `rustfs-credentials`, with random keys
 
 It never rotates anything. It refreshes only the JWT pool's derived public keys.
-It also sets the Pod Security labels on the release namespace. That cannot be a
-Namespace template, because Helm does not own the namespace. A ClusterRole
-limited by `resourceNames` to that one namespace allows it. The Job creates no
-namespace.
+It creates and changes no namespace.
 
 The Job's ServiceAccount and Role are hooks with a lower weight, so they exist
 before the Job and go away with it. The CAs expire one year after creation and
@@ -177,7 +176,7 @@ seccomp profile). Atelet needs root, a hostPath and the extra capabilities.
 So the namespaces that hold workers or atelet get `privileged`, set by
 `podSecurity.level`:
 
-- `ate-system`, labelled by the bootstrap Job
+- `ate-system`, labelled by an ACD output, always `privileged` (atelet needs it)
 - `kagent` and the namespaces of extra WorkerPools, labelled by chart templates
 
 Everything else the chart renders passes `restricted`, and the bootstrap Job's

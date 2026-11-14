@@ -30,8 +30,9 @@ global:
 # kagent-dev/substrate cmd/atecontroller/internal/controllers/workerpool_apply.go.
 # The workers are created by Substrate in the WorkerPool's namespace, so that
 # namespace needs `privileged` (`baseline` forbids hostPath, the extra
-# capabilities and the unconfined profiles). The release namespace gets the same
-# level from the bootstrap Job, for atelet (root, hostPath, extra capabilities).
+# capabilities and the unconfined profiles). The release namespace is always
+# `privileged`, for atelet (root, hostPath, extra capabilities); an ACD output
+# sets it, not this value.
 # Everything else this chart renders passes `restricted`.
 podSecurity:
   level: privileged

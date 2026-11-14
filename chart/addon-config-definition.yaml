@@ -358,6 +358,41 @@ spec:
         stringData:
           values.yaml: |
         {{ $v | toYaml | indent 4 }}
+    # The release namespace and its Pod Security labels. atelet needs
+    # `privileged` (root, hostPath, extra capabilities), whatever
+    # podSecurity.level says for the kagent and WorkerPool namespaces; VKS
+    # enforces `restricted` by default. An ACD output, not a chart template,
+    # because the helm-controller creates the release namespace and Helm does
+    # not own it. The addon manager applies outputs before the HelmRelease runs,
+    # and merges the labels into a namespace that already exists.
+    - targetClusterOutput:
+        apiVersion: v1
+        kind: Namespace
+        name: >-
+          {{- $ns := "ate-system" -}}
+          {{- if .Values -}}
+          {{-   if hasKey .Values "helmOptions" -}}
+          {{-     if index .Values "helmOptions" -}}
+          {{-       if hasKey (index .Values "helmOptions") "targetNamespace" -}}
+          {{-         if index .Values "helmOptions" "targetNamespace" -}}
+          {{-           $ns = index .Values "helmOptions" "targetNamespace" -}}
+          {{-         end -}}
+          {{-       end -}}
+          {{-     end -}}
+          {{-   end -}}
+          {{- end -}}
+          {{- $ns -}}
+        referenceType: Direct
+        scope: Cluster
+      labels:
+        - key: pod-security.kubernetes.io/enforce
+          value: privileged
+        - key: pod-security.kubernetes.io/audit
+          value: privileged
+        - key: pod-security.kubernetes.io/warn
+          value: privileged
+      template: |-
+        spec: {}
     # The egress gateway's CA policy: a MutatingAdmissionPolicy and its binding
     # that mount the chart's ConfigMap egress-ca-bundle over the gateway's
     # ca-certificates.crt. They are ACD outputs, not chart templates, because the
@@ -367,9 +402,7 @@ spec:
     # Temporary: kagent-dev/substrate#101 (chart value for the egress upstream
     # trust, tracked in agent-substrate/substrate#2684). Both outputs go when it
     # ships.
-    # The name is the same simple template as the other outputs' names, which
-    # is not known to see .Values, so it cannot hold the namespace; the policy
-    # is per guest cluster, so the addon name is unique enough.
+    # The policy is per guest cluster, so the addon name is unique enough.
     - targetClusterOutput:
         apiVersion: admissionregistration.k8s.io/v1
         kind: MutatingAdmissionPolicy

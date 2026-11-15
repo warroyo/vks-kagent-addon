@@ -130,7 +130,9 @@ creates the release namespace, so Helm cannot template it.
 Decision: a `targetClusterOutput` of kind Namespace, named from
 `helmOptions.targetNamespace`, with the three `pod-security.kubernetes.io/*`
 labels fixed at `privileged`. The addon manager merges the labels into the
-namespace, and applies outputs before the HelmRelease runs.
+namespace, and applies outputs before the HelmRelease runs. Removing the addon
+deletes the namespace, and its CA Secrets with it. The name template stays under
+the CRD's 253-character cap.
 
 Alternatives rejected: the bootstrap Job patching the namespace, which needed a
 ClusterRole and put a platform setting in an install-time pod.

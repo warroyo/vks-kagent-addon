@@ -364,24 +364,12 @@ spec:
     # enforces `restricted` by default. An ACD output, not a chart template,
     # because the helm-controller creates the release namespace and Helm does
     # not own it. The addon manager applies outputs before the HelmRelease runs,
-    # and merges the labels into a namespace that already exists.
+    # and merges the labels into a namespace that already exists. The CRD caps
+    # name at 253 characters, template included, hence the one-line dig.
     - targetClusterOutput:
         apiVersion: v1
         kind: Namespace
-        name: >-
-          {{- $ns := "ate-system" -}}
-          {{- if .Values -}}
-          {{-   if hasKey .Values "helmOptions" -}}
-          {{-     if index .Values "helmOptions" -}}
-          {{-       if hasKey (index .Values "helmOptions") "targetNamespace" -}}
-          {{-         if index .Values "helmOptions" "targetNamespace" -}}
-          {{-           $ns = index .Values "helmOptions" "targetNamespace" -}}
-          {{-         end -}}
-          {{-       end -}}
-          {{-     end -}}
-          {{-   end -}}
-          {{- end -}}
-          {{- $ns -}}
+        name: '{{ dig "helmOptions" "targetNamespace" "" (.Values | default dict) | default "ate-system" }}'
         referenceType: Direct
         scope: Cluster
       labels:

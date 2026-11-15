@@ -479,6 +479,7 @@ func TestACDEgressPolicyOutputs(t *testing.T) {
 		"default namespace":      {schemaDefaults(), "ate-system"},
 		"no values":              {nil, "ate-system"},
 		"empty target":           {map[string]any{"helmOptions": map[string]any{"targetNamespace": ""}}, "ate-system"},
+		"no helmOptions":         {map[string]any{"helmValues": map[string]any{}}, "ate-system"},
 		"custom targetNamespace": {map[string]any{"helmOptions": map[string]any{"targetNamespace": "agents"}}, "agents"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -537,6 +538,7 @@ func TestACDNamespaceOutput(t *testing.T) {
 		"default namespace":      {schemaDefaults(), "ate-system"},
 		"no values":              {nil, "ate-system"},
 		"empty target":           {map[string]any{"helmOptions": map[string]any{"targetNamespace": ""}}, "ate-system"},
+		"no helmOptions":         {map[string]any{"helmValues": map[string]any{}}, "ate-system"},
 		"custom targetNamespace": {map[string]any{"helmOptions": map[string]any{"targetNamespace": "agents"}}, "agents"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -545,5 +547,19 @@ func TestACDNamespaceOutput(t *testing.T) {
 				t.Errorf("namespace name = %q, want %q", got, tc.ns)
 			}
 		})
+	}
+}
+
+// The CRD caps these fields of a targetClusterOutput, template expressions
+// included. The addon manager drops an ACD that breaks a cap, and the
+// AddonRelease never appears, with no reason given anywhere a tenant can see.
+func TestACDOutputFieldsFitTheCRD(t *testing.T) {
+	limits := map[string]int{"apiVersion": 317, "kind": 63, "name": 253, "namespace": 63}
+	for i, o := range loadACD(t).Spec.TemplateOutputResources {
+		for field, max := range limits {
+			if v, ok := o.TargetClusterOutput[field].(string); ok && len(v) > max {
+				t.Errorf("output %d: targetClusterOutput.%s is %d characters, the CRD allows %d", i, field, len(v), max)
+			}
+		}
 	}
 }

@@ -63,7 +63,7 @@ and [Upstream workarounds](upstream-workarounds.md#the-egress-gateway-cannot-tru
 Removing the addon and reinstalling soon after can fail once with
 `InstallFailed ... timeout waiting for: [SandboxConfig/gvisor-default status: 'NotFound']`.
 
-On removal, Substrate's `sandboxconfig-protection` finalizer keeps the
+On removal, Substrate's `workerpool-protection` finalizer keeps the
 cluster-scoped SandboxConfig while WorkerPools use it. The atecontroller is
 removed before it can release the object. The reinstalled controller then
 releases and deletes the old object after Helm created or adopted it.
@@ -92,13 +92,17 @@ so it is applied again. After re-applying the CA, delete the egress pods (see
 Removing the addon leaves:
 
 - The CRDs. Helm never deletes CRDs.
-- The `ate-system` namespace with its Pod Security labels.
-- The bootstrap Job's CA and RustFS Secrets in `ate-system`.
+- The SandboxConfig `gvisor-default`, held by its
+  `sandboxconfig.ate.dev/workerpool-protection` finalizer.
 - The podcert ClusterTrustBundles (`*.podcert.ate.dev:identity:primary-bundle`
   and `egress-mitm.ate.dev:mitm:primary-bundle`).
 
-A reinstall reuses the CA Secrets. Delete these only for a clean slate. The
-`kagent` namespace and its Postgres data are deleted.
+The `ate-system` namespace is an ACD output, so the addon manager deletes it,
+with the bootstrap Job's CA and RustFS Secrets. The `kagent` namespace and its
+Postgres data are deleted too. A reinstall generates new CAs.
+
+For a clean slate, remove the SandboxConfig's finalizer and delete it, then
+delete the ClusterTrustBundles and the `*.ate.dev` and `*.kagent.dev` CRDs.
 
 ## Why does the addon manager reject a lower version?
 

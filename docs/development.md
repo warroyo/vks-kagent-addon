@@ -10,7 +10,7 @@ Build from `bootstrap/`:
 
 ```sh
 cd bootstrap
-docker build -t ghcr.io/warroyo/vks-kagent-addon/bootstrap:0.1.5 .
+docker build -t ghcr.io/warroyo/vks-kagent-addon/bootstrap:0.1.6 .
 ```
 
 The tag is the chart's `appVersion`. The chart's `bootstrap.image.tag` defaults

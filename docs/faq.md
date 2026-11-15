@@ -1,6 +1,6 @@
 # FAQ
 
-Tested on VKS 1.37.1 with chart 0.1.5.
+Tested on VKS 1.37.1 with chart 0.1.6.
 
 ## How do I set up a model?
 

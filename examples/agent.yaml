@@ -1,0 +1,17 @@
+# An agent that uses the model in modelconfig.yaml. It runs in a Substrate
+# sandbox from kagent's own worker pool, kagent-default. See
+# docs/models-and-agents.md.
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: hello-agent
+  namespace: kagent
+spec:
+  template:
+    inline:
+      modelConfig:
+        name: my-model
+      description: Answers short questions.
+      systemPrompt: Answer in one short sentence.
+  harnessRef:
+    name: kagent-default

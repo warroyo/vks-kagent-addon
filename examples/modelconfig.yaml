@@ -1,0 +1,21 @@
+# A model for kagent agents: any OpenAI-compatible endpoint. See
+# docs/models-and-agents.md.
+#
+# Create the API key Secret first, in the same namespace:
+#   kubectl -n kagent create secret generic my-model-api-key \
+#     --from-literal=OPENAI_API_KEY=<key>
+#
+# The endpoint must be a DNS name, not an IP address. If it uses a private CA,
+# set egressCABundle in the AddonConfig.
+apiVersion: api.kagent.dev/v1alpha3
+kind: ModelConfig
+metadata:
+  name: my-model
+  namespace: kagent
+spec:
+  provider: OpenAI
+  model: my-model-name
+  apiKeySecret: my-model-api-key
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    baseUrl: https://models.example.com/v1

@@ -1,0 +1,53 @@
+# Test cluster for the addon. See docs/development.md#test-cluster.
+#
+# Set the namespace and the storage class (three places) for your Supervisor.
+# The VM classes must be assigned to the Supervisor Namespace.
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: kagent-test
+  namespace: kagent-test
+spec:
+  clusterNetwork:
+    serviceDomain: cluster.local
+    pods:
+      cidrBlocks: [192.168.0.0/16]
+    services:
+      cidrBlocks: [10.96.0.0/12]
+  topology:
+    classRef:
+      name: builtin-generic-v3.8.0
+      namespace: vmware-system-vks-public
+    version: v1.37.1+vmware.4
+    controlPlane:
+      replicas: 1
+      metadata:
+        annotations:
+          run.tanzu.vmware.com/resolve-os-image: os-name=ubuntu,os-version=24.04
+    workers:
+      machineDeployments:
+        - class: node-pool
+          name: workers
+          replicas: 2
+          metadata:
+            annotations:
+              run.tanzu.vmware.com/resolve-os-image: os-name=ubuntu,os-version=24.04
+          variables:
+            overrides:
+              - name: vmClass
+                value: best-effort-large
+    variables:
+      - name: vmClass
+        value: best-effort-medium
+      - name: storageClass
+        value: my-storage-class
+      - name: vsphereOptions
+        value:
+          persistentVolumes:
+            availableStorageClasses: [my-storage-class]
+            defaultStorageClass: my-storage-class
+      - name: bootstrapAddons
+        value:
+          cniRef:
+            name: antrea
+            namespace: vmware-system-vks-public

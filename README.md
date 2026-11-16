@@ -100,9 +100,8 @@ Prerequisites:
 
    The ClusterAddon is Ready when every pod in both namespaces is Running.
 
-Agents need a model. See [the FAQ](docs/faq.md#how-do-i-set-up-a-model) for the
-ModelConfig and the API key Secret. For problems, see the
-[FAQ](docs/faq.md).
+Agents need a model. See [Models and agents](docs/models-and-agents.md) to
+connect one and run a first agent. For problems, see the [FAQ](docs/faq.md).
 
 ## Repo structure
 
@@ -111,10 +110,11 @@ chart/kagent/                    umbrella chart (published to ghcr.io by CI)
 chart/addon-config-definition.yaml   source of the chart's AddonConfigDefinition
 bootstrap/                       the bootstrap Job (Go) and its Dockerfile
 install/addonrepository.yaml     AddonRepository and install (OCI) for registering the addon
-examples/                        AddonInstall and AddonConfig
+examples/                        AddonInstall, AddonConfig, ModelConfig and Agent
 scripts/                         embed-acd.sh, sync-crds.sh, sync-ca-roots.sh
 LICENSE                          Apache License 2.0
 test/acd/                        renders the ACD and the chart in a Go test
+test/cluster.yaml                VKS 1.37 test cluster
 .github/workflows/               test and release
 docs/                            see below
 ```
@@ -124,7 +124,9 @@ docs/                            see below
 - [docs/configuration.md](docs/configuration.md): AddonConfig values and chart
   values
 - [docs/development.md](docs/development.md): building, tests, check scripts,
-  releasing
+  a test cluster, releasing
+- [docs/models-and-agents.md](docs/models-and-agents.md): connecting a model
+  and running a first agent
 - [docs/faq.md](docs/faq.md): operational questions and gotchas
 - [docs/decisions.md](docs/decisions.md): design decisions and rejected
   alternatives

@@ -2,7 +2,8 @@
 # the label addons.kubernetes.vmware.com/kagent=enabled.
 #
 # The cluster needs Kubernetes 1.37 or later: Substrate uses pod certificates
-# and ClusterTrustBundles (certificates.k8s.io/v1beta1), which 1.37 serves.
+# and ClusterTrustBundles (certificates.k8s.io/v1), which are GA and on by
+# default from Kubernetes 1.37.
 #
 # The chart is a helm addon, so the cluster also needs the helm-controller
 # addon: label it addon.addons.kubernetes.vmware.com/helm-controller=automatic

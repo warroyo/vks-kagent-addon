@@ -48,6 +48,85 @@ whenever Mozilla updates it. Refresh the roots by hand with
 `scripts/sync-ca-roots.sh` and release a new chart version. The shipped roots go
 stale until you do.
 
+## Test cluster
+
+A VKS 1.37 cluster with the published chart installed. Steps 1 and 3 need a
+Supervisor administrator.
+
+1. Create a Supervisor Namespace, here `kagent-test`. Assign the VM classes
+   `best-effort-medium` and `best-effort-large`, a storage policy, and a content
+   library with the 1.37.1 VKr. 300Gi of storage, 30 GHz of CPU and 64Gi of
+   memory are enough.
+2. Set the storage class in `test/cluster.yaml`, then create the cluster:
+
+   ```sh
+   kubectl -n kagent-test apply -f test/cluster.yaml
+   ```
+
+3. Offer the addon on the Supervisor:
+
+   ```sh
+   kubectl apply -f install/addonrepository.yaml
+   kubectl -n vmware-system-vks-public get addonrepositoryinstall kagent-oci-repo-install
+   ```
+
+   The Ready condition lists the valid AddonReleases, such as
+   `kagent:0.1.6, 0.1.5`.
+4. Install the addon. Apply `examples/addoninstall.yaml` with `namespace` set
+   to `kagent-test`, and label the cluster:
+
+   ```sh
+   kubectl -n kagent-test label cluster kagent-test addons.kubernetes.vmware.com/kagent=enabled
+   ```
+
+   The cluster also needs the helm-controller addon. Clusters from
+   `builtin-generic-v3.8.0` already have the label
+   `addon.addons.kubernetes.vmware.com/helm-controller=automatic`.
+   To test a build from [Test builds](#test-builds), add its version to
+   `addonFilters` and set `releaseFilter` in the AddonInstall to
+   `kagent.<version>`.
+5. When the cluster is Provisioned, get its kubeconfig and check the install:
+
+   ```sh
+   kubectl -n kagent-test get secret kagent-test-kubeconfig -o jsonpath='{.data.value}' | base64 -d > kagent-test.kubeconfig
+   chmod 600 kagent-test.kubeconfig
+   export KUBECONFIG=$PWD/kagent-test.kubeconfig
+   kubectl -n vmware-system-helm get helmrelease kagent-test-kagent
+   kubectl -n ate-system get pods
+   kubectl -n kagent get pods
+   ```
+
+   The HelmRelease reports `Helm install succeeded`. `kagent-controller`
+   restarts a few times while PostgreSQL starts.
+6. Connect a model and run an agent. See
+   [Models and agents](models-and-agents.md).
+
+The addon manager creates the AddonConfig `kagent-test-kagent` with the
+install. To change values, such as `egressCABundle` or `helmValues`, patch it:
+
+```sh
+kubectl -n kagent-test patch addonconfig kagent-test-kagent --type merge \
+  -p '{"spec":{"values":{"helmValues":{"kagent":{"ui":{"service":{"type":"LoadBalancer"}}}}}}}'
+```
+
+The HelmRelease in the guest cluster checks for new values every 10 minutes. To
+apply them now:
+
+```sh
+kubectl -n vmware-system-helm annotate helmrelease kagent-test-kagent \
+  reconcile.fluxcd.io/requestedAt="$(date +%s)" --overwrite
+```
+
+To tear down, delete in this order, so that the addon manager removes the addon
+from the cluster first:
+
+1. The AddonInstall. Wait until ClusterAddon `kagent-test-kagent` is gone.
+2. The cluster.
+3. The Supervisor Namespace.
+
+Delete the AddonRepository only when no cluster on the Supervisor uses the
+addon.
+
 ## Releasing
 
 1. Bump `version` and `appVersion` in `chart/kagent/Chart.yaml`.

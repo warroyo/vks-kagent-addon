@@ -4,40 +4,19 @@ Tested on VKS 1.37.1 with chart 0.1.6.
 
 ## How do I set up a model?
 
-kagent's default ModelConfig is `default-model-config` in the `kagent`
-namespace. For an OpenAI-compatible endpoint, set `modelProvider` in the
-AddonConfig (see [Configuration](configuration.md)) and create the API key
-Secret yourself:
+Create a ModelConfig and an API key Secret in `kagent`, and point your agents
+at the ModelConfig. See [Models and agents](models-and-agents.md).
 
-```sh
-kubectl -n kagent create secret generic model-api-key \
-  --from-literal=OPENAI_API_KEY=...
-```
+The AddonConfig value `modelProvider` (see [Configuration](configuration.md))
+only fills in `default-model-config`, the ModelConfig kagent's built-in agents
+use. The Secret it names must exist in `kagent` with the key `OPENAI_API_KEY`.
+Never put the key in the AddonConfig.
 
-The Secret name must match `modelProvider.apiKeySecretName`. Never put the key
-in the AddonConfig. To manage the Secret from GitOps, create it with External
-Secrets.
+## How do I reach the UI?
 
-To add another model, create a ModelConfig in `kagent`:
-
-```yaml
-apiVersion: api.kagent.dev/v1alpha3
-kind: ModelConfig
-metadata:
-  name: my-model
-  namespace: kagent
-spec:
-  provider: OpenAI
-  model: my-model
-  apiKeySecret: model-api-key
-  apiKeySecretKey: OPENAI_API_KEY
-  openAI:
-    baseUrl: https://models.example.com/v1
-```
-
-Agents reach the model through Substrate's egress gateway, which injects the key
-from the Secret. The endpoint must be a DNS name, not an IP address, and the
-egress policy must allow it.
+Port-forward `svc/kagent-ui` in `kagent` on port 8080, or make the Service a
+LoadBalancer with `helmValues.kagent.ui.service.type`. See
+[Models and agents](models-and-agents.md#reaching-the-ui).
 
 ## How do I trust a private CA for egress?
 

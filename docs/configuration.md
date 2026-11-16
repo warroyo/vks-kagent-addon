@@ -22,7 +22,10 @@ optional. The source is the schema in `chart/addon-config-definition.yaml`.
 | `modelProvider.apiKeySecretName` | empty | Secret in `kagent` with the key `OPENAI_API_KEY`. Empty keeps `kagent-openai`. |
 | `helmValues` | | Extra Helm values for the chart, applied before the derived values. Derived keys are overwritten. |
 
-The API key is never an AddonConfig value. See [the FAQ](faq.md#how-do-i-set-up-a-model).
+`modelProvider` only fills in `default-model-config`, the ModelConfig kagent's
+built-in agents use. Your own agents can use their own ModelConfig instead; see
+[Models and agents](models-and-agents.md). The API key is never an AddonConfig
+value.
 
 ## Chart values you might change
 

@@ -117,11 +117,13 @@ kubectl -n vmware-system-helm annotate helmrelease kagent-test-kagent \
   reconcile.fluxcd.io/requestedAt="$(date +%s)" --overwrite
 ```
 
-To tear down, delete in this order, so that the addon manager removes the addon
-from the cluster first:
+To tear down, delete in this order:
 
-1. The AddonInstall. Wait until ClusterAddon `kagent-test-kagent` is gone.
-2. The cluster.
+1. The cluster. Its ClusterAddon `kagent-test-kagent` goes with it. Deleting the
+   AddonInstall first does not remove the ClusterAddon, because the example
+   sets `stopMatchingBehavior: Retain`, and the AddonInstall's finalizer waits
+   for the cluster.
+2. The AddonInstall.
 3. The Supervisor Namespace.
 
 Delete the AddonRepository only when no cluster on the Supervisor uses the
